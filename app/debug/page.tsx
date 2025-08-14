@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react';
 import { getSupabase } from '@/lib/supabase';
 
+type Permission = 'default' | 'denied' | 'granted';
 type Info = {
   sw: string;
-  permission: NotificationPermission;
+  permission: Permission;
   subscribed: boolean;
   endpoint?: string;
   vapidLen: number;
@@ -16,7 +17,7 @@ const VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || '';
 function u8(base64: string) {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4);
   const base = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const raw = atob(base);
+  const raw = typeof atob === 'function' ? atob(base) : '';
   const out = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
@@ -24,28 +25,41 @@ function u8(base64: string) {
 
 export default function DebugPage() {
   const supabase = getSupabase();
-  const [info, setInfo] = useState<Info>({ sw: 'checking', permission: Notification.permission, subscribed: false, vapidLen: VAPID_PUBLIC.length });
-  const [log, setLog] = useState<string>('');
 
+  // KHÔNG đọc Notification khi render -> để giá trị mặc định, cập nhật trong useEffect
+  const [info, setInfo] = useState<Info>({
+    sw: 'checking',
+    permission: 'default',
+    subscribed: false,
+    vapidLen: VAPID_PUBLIC.length,
+  });
+  const [log, setLog] = useState<string>('');
   const append = (s: string) => setLog(x => x + s + '\n');
 
   const refresh = async () => {
     try {
       let sw = 'unsupported';
-      if ('serviceWorker' in navigator) {
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.getRegistration('/');
         sw = reg ? 'registered' : 'not-registered';
       }
-      let subscribed = false, endpoint = undefined as string | undefined;
-      if ('serviceWorker' in navigator) {
+
+      let subscribed = false, endpoint: string | undefined;
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.ready;
         const sub = await reg.pushManager.getSubscription();
         subscribed = !!sub;
         endpoint = sub?.endpoint;
       }
-      setInfo({ sw, permission: Notification.permission, subscribed, endpoint, vapidLen: VAPID_PUBLIC.length });
-    } catch (e) {
-      append('refresh error: ' + (e as any)?.message);
+
+      const permission: Permission =
+        typeof window !== 'undefined' && 'Notification' in window
+          ? (Notification.permission as Permission)
+          : 'default';
+
+      setInfo({ sw, permission, subscribed, endpoint, vapidLen: VAPID_PUBLIC.length });
+    } catch (e: any) {
+      append('refresh error: ' + (e?.message || e));
     }
   };
 
@@ -53,19 +67,34 @@ export default function DebugPage() {
 
   const doSubscribe = async () => {
     try {
+      if (!(typeof window !== 'undefined' && 'Notification' in window)) {
+        append('Trình duyệt không hỗ trợ Notification');
+        return;
+      }
       if (Notification.permission !== 'granted') {
         const p = await Notification.requestPermission();
         if (p !== 'granted') { append('User denied notification'); return; }
       }
       const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: u8(VAPID_PUBLIC) });
-      const rawKey = (key: string) => btoa(String.fromCharCode.apply(null, new Uint8Array(sub.getKey(key) as ArrayBuffer) as unknown as number[]));
-      const p256dh = rawKey('p256dh'); const auth = rawKey('auth');
-      await supabase.from('push_subscriptions').upsert({ user_id: (await supabase.auth.getUser()).data.user?.id, endpoint: sub.endpoint, p256dh, auth }, { onConflict: 'endpoint' });
-      append('Subscribed & saved endpoint: ' + sub.endpoint.slice(0, 30) + '...');
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: u8(VAPID_PUBLIC),
+      });
+      const rawKey = (key: string) =>
+        btoa(String.fromCharCode.apply(null, new Uint8Array(sub.getKey(key) as ArrayBuffer) as unknown as number[]));
+      const p256dh = rawKey('p256dh');
+      const auth = rawKey('auth');
+
+      const { data: u } = await supabase.auth.getUser();
+      await supabase.from('push_subscriptions').upsert(
+        { user_id: u.user?.id, endpoint: sub.endpoint, p256dh, auth },
+        { onConflict: 'endpoint' }
+      );
+
+      append('Subscribed: ' + sub.endpoint.slice(0, 38) + '…');
       refresh();
-    } catch (e) {
-      append('subscribe error: ' + (e as any)?.message);
+    } catch (e: any) {
+      append('subscribe error: ' + (e?.message || e));
     }
   };
 
@@ -79,8 +108,8 @@ export default function DebugPage() {
       }
       append('Unsubscribed');
       refresh();
-    } catch (e) {
-      append('unsubscribe error: ' + (e as any)?.message);
+    } catch (e: any) {
+      append('unsubscribe error: ' + (e?.message || e));
     }
   };
 
@@ -89,16 +118,17 @@ export default function DebugPage() {
       const { data: u } = await supabase.auth.getUser();
       const userId = u.user?.id;
       if (!userId) { append('Chưa đăng nhập'); return; }
+
       const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/send-notifications`;
       const res = await fetch(url!, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, // no Authorization because deployed with no-verify-jwt
-        body: JSON.stringify({ mode: 'test', user_id: userId })
+        headers: { 'Content-Type': 'application/json' }, // dùng no-verify-jwt
+        body: JSON.stringify({ mode: 'test', user_id: userId }),
       });
       const txt = await res.text();
       append('TEST response: ' + txt);
-    } catch (e) {
-      append('test error: ' + (e as any)?.message);
+    } catch (e: any) {
+      append('test error: ' + (e?.message || e));
     }
   };
 
@@ -117,7 +147,7 @@ export default function DebugPage() {
         <button className="btn btn-outline-primary btn-sm" onClick={refresh}>Refresh</button>
         <button className="btn btn-success btn-sm" onClick={doSubscribe}>Đăng ký Push</button>
         <button className="btn btn-outline-secondary btn-sm" onClick={doUnsubscribe}>Hủy Push</button>
-        <button className="btn btn-warning btn-sm" onClick={testPushEmail}>Test Push + Email (Edge Function)</button>
+        <button className="btn btn-warning btn-sm" onClick={testPushEmail}>Test Push + Email</button>
       </div>
 
       <pre style={{whiteSpace:'pre-wrap', background:'#f8f9fa', padding:12, borderRadius:6, minHeight:150}}>{log}</pre>
