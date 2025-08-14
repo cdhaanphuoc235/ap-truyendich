@@ -26,7 +26,6 @@ function u8(base64: string) {
 export default function DebugPage() {
   const supabase = getSupabase();
 
-  // KHÔNG đọc Notification khi render -> để giá trị mặc định, cập nhật trong useEffect
   const [info, setInfo] = useState<Info>({
     sw: 'checking',
     permission: 'default',
@@ -39,24 +38,21 @@ export default function DebugPage() {
   const refresh = async () => {
     try {
       let sw = 'unsupported';
-      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      if ('serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.getRegistration('/');
         sw = reg ? 'registered' : 'not-registered';
       }
-
       let subscribed = false, endpoint: string | undefined;
-      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      if ('serviceWorker' in navigator) {
         const reg = await navigator.serviceWorker.ready;
         const sub = await reg.pushManager.getSubscription();
         subscribed = !!sub;
         endpoint = sub?.endpoint;
       }
-
       const permission: Permission =
         typeof window !== 'undefined' && 'Notification' in window
           ? (Notification.permission as Permission)
           : 'default';
-
       setInfo({ sw, permission, subscribed, endpoint, vapidLen: VAPID_PUBLIC.length });
     } catch (e: any) {
       append('refresh error: ' + (e?.message || e));
@@ -67,13 +63,10 @@ export default function DebugPage() {
 
   const doSubscribe = async () => {
     try {
-      if (!(typeof window !== 'undefined' && 'Notification' in window)) {
-        append('Trình duyệt không hỗ trợ Notification');
-        return;
-      }
+      if (!('Notification' in window)) return append('Trình duyệt không hỗ trợ Notification');
       if (Notification.permission !== 'granted') {
         const p = await Notification.requestPermission();
-        if (p !== 'granted') { append('User denied notification'); return; }
+        if (p !== 'granted') return append('User denied notification');
       }
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({
@@ -84,14 +77,12 @@ export default function DebugPage() {
         btoa(String.fromCharCode.apply(null, new Uint8Array(sub.getKey(key) as ArrayBuffer) as unknown as number[]));
       const p256dh = rawKey('p256dh');
       const auth = rawKey('auth');
-
       const { data: u } = await supabase.auth.getUser();
       await supabase.from('push_subscriptions').upsert(
         { user_id: u.user?.id, endpoint: sub.endpoint, p256dh, auth },
         { onConflict: 'endpoint' }
       );
-
-      append('Subscribed: ' + sub.endpoint.slice(0, 38) + '…');
+      append('Subscribed & saved endpoint: ' + sub.endpoint.slice(0, 45) + '…');
       refresh();
     } catch (e: any) {
       append('subscribe error: ' + (e?.message || e));
@@ -113,20 +104,23 @@ export default function DebugPage() {
     }
   };
 
+  // 👉 DÙNG SDK GỌI EDGE FUNCTION (không bị CORS)
   const testPushEmail = async () => {
     try {
       const { data: u } = await supabase.auth.getUser();
       const userId = u.user?.id;
-      if (!userId) { append('Chưa đăng nhập'); return; }
+      if (!userId) return append('Chưa đăng nhập');
 
-      const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/send-notifications`;
-      const res = await fetch(url!, {
+      const { data, error } = await supabase.functions.invoke('send-notifications', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, // dùng no-verify-jwt
-        body: JSON.stringify({ mode: 'test', user_id: userId }),
+        body: { mode: 'test', user_id: userId },
       });
-      const txt = await res.text();
-      append('TEST response: ' + txt);
+
+      if (error) {
+        append('invoke error: ' + (error.message || JSON.stringify(error)));
+      } else {
+        append('TEST response: ' + JSON.stringify(data));
+      }
     } catch (e: any) {
       append('test error: ' + (e?.message || e));
     }
