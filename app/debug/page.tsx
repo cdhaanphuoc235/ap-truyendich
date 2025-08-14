@@ -93,7 +93,7 @@ export default function DebugPage() {
     } catch (e: any) { say('unsubscribe error: ' + (e?.message || e)); }
   };
 
-  // -> DÙNG SDK, KHÔNG CORS
+  // TEST push + email trực tiếp cho user hiện tại
   const testPushEmail = async () => {
     try {
       const { data: u } = await supabase.auth.getUser();
@@ -109,6 +109,18 @@ export default function DebugPage() {
     } catch (e: any) { say('test error: ' + (e?.message || e)); }
   };
 
+  // QUÉT DB ngay bây giờ (giống cron) để bắt ca scheduled
+  const runScanNow = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('send-notifications', {
+        method: 'POST',
+        body: { mode: 'scan' }  // bất kỳ khác 'test' → vào nhánh scheduled
+      });
+      if (error) say('scan error: ' + (error.message || JSON.stringify(error)));
+      else       say('SCAN response: ' + JSON.stringify(data));
+    } catch (e: any) { say('scan error: ' + (e?.message || e)); }
+  };
+
   return (
     <div className="container py-4">
       <h4>Debug Push/Email</h4>
@@ -120,11 +132,12 @@ export default function DebugPage() {
         <li>VAPID public length: <b>{info.vapidLen}</b></li>
       </ul>
 
-      <div className="d-flex gap-2 mb-3">
+      <div className="d-flex flex-wrap gap-2 mb-3">
         <button className="btn btn-outline-primary btn-sm" onClick={refresh}>Refresh</button>
         <button className="btn btn-success btn-sm" onClick={doSubscribe}>Đăng ký Push</button>
         <button className="btn btn-outline-secondary btn-sm" onClick={doUnsubscribe}>Hủy Push</button>
         <button className="btn btn-warning btn-sm" onClick={testPushEmail}>Test Push + Email</button>
+        <button className="btn btn-danger btn-sm" onClick={runScanNow}>Quét ca ngay (scheduled)</button>
       </div>
 
       <pre style={{whiteSpace:'pre-wrap', background:'#f8f9fa', padding:12, borderRadius:6, minHeight:150}}>{log}</pre>
