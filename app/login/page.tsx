@@ -8,10 +8,14 @@ export default function LoginPage() {
   const supabase = getSupabase();
 
   const signIn = async () => {
-    const redirectTo = `${location.origin}/app`; // quay về /app sau khi login
+    const redirectTo = `${location.origin}/app?from=oauth`;
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo }
+      options: {
+        redirectTo,
+        queryParams: { prompt: 'consent', access_type: 'offline' }, // lấy refresh_token ổn định
+        flowType: 'pkce'
+      }
     });
     if (error) alert(error.message);
   };
