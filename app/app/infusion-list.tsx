@@ -23,6 +23,17 @@ function formatDuration(ms: number) {
   const ss = s % 60;
   return `${hh.toString().padStart(2,'0')}:${mm.toString().padStart(2,'0')}:${ss.toString().padStart(2,'0')}`;
 }
+function formatEnd(end?: Date | null) {
+  if (!end) return '-';
+  const time = end.toLocaleTimeString('vi-VN', { hour12: false });
+  const date = end.toLocaleDateString('vi-VN');
+  return `${time} ${date}`;
+}
+function remainClass(ms: number) {
+  if (ms <= 60_000) return 'text-danger';
+  if (ms <= 5 * 60_000) return 'text-warning';
+  return 'text-success';
+}
 
 export default function InfusionList({ userId }: Props) {
   const supabase = getSupabase();
@@ -53,6 +64,7 @@ export default function InfusionList({ userId }: Props) {
     };
   }, []);
 
+  // chỉ ca đang chạy
   const items = useMemo(() => {
     return (rows || [])
       .map(r => {
@@ -60,7 +72,7 @@ export default function InfusionList({ userId }: Props) {
         const remain = end - now;
         return { ...r, remain, endDate: end ? new Date(end) : null };
       })
-      .filter(r => r.remain > 0) // chỉ ca đang chạy
+      .filter(r => r.remain > 0)
       .sort((a, b) => (a.endDate?.getTime() || 0) - (b.endDate?.getTime() || 0));
   }, [rows, now]);
 
@@ -68,15 +80,47 @@ export default function InfusionList({ userId }: Props) {
     <div className="card mt-3">
       <div className="card-body">
         <h5 className="card-title">Danh sách ca truyền (đang chạy)</h5>
-        <div className="table-responsive">
+
+        {/* ====== Mobile cards (<576px) ====== */}
+        <div className="d-sm-none">
+          {items.length === 0 && (
+            <div className="text-muted">Không có ca đang chạy.</div>
+          )}
+
+          {items.map(r => (
+            <div key={r.id} className="border rounded p-3 mb-3">
+              <div className="d-flex justify-content-between align-items-start">
+                <div>
+                  <div className="fw-bold">{r.patient_name || '-'}</div>
+                  <div className="text-muted small">
+                    Phòng {r.room || '-'} — Giường {r.bed || '-'}
+                  </div>
+                </div>
+                <span className="badge bg-primary">đang truyền</span>
+              </div>
+
+              <div className={`mt-2 font-monospace display-6 ${remainClass(r.remain)}`} style={{ lineHeight: 1 }}>
+                {formatDuration(r.remain)}
+              </div>
+
+              <div className="small mt-1">
+                <span className="text-muted">Kết thúc: </span>
+                <strong>{formatEnd(r.endDate)}</strong>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* ====== Desktop table (≥576px) ====== */}
+        <div className="table-responsive d-none d-sm-block">
           <table className="table table-sm align-middle">
             <thead>
               <tr>
                 <th>Bệnh nhân</th>
-                <th className="d-none d-sm-table-cell">Phòng - Giường</th>
-                <th className="d-none d-sm-table-cell">Kết thúc</th>
+                <th>Phòng - Giường</th>
+                <th>Kết thúc</th>
                 <th>Đếm ngược</th>
-                <th className="d-none d-md-table-cell">Trạng thái</th>
+                <th>Trạng thái</th>
               </tr>
             </thead>
             <tbody>
@@ -86,15 +130,20 @@ export default function InfusionList({ userId }: Props) {
               {items.map(r => (
                 <tr key={r.id}>
                   <td>{r.patient_name || '-'}</td>
-                  <td className="d-none d-sm-table-cell">{[r.room, r.bed].filter(Boolean).join(' - ') || '-'}</td>
-                  <td className="d-none d-sm-table-cell">{r.endDate ? r.endDate.toLocaleString() : '-'}</td>
-                  <td><span className="fw-bold">{formatDuration(r.remain)}</span></td>
-                  <td className="d-none d-md-table-cell"><span className="text-primary">đang truyền</span></td>
+                  <td>{[r.room, r.bed].filter(Boolean).join(' - ') || '-'}</td>
+                  <td>{formatEnd(r.endDate)}</td>
+                  <td>
+                    <span className={`fw-bold font-monospace ${remainClass(r.remain)}`}>
+                      {formatDuration(r.remain)}
+                    </span>
+                  </td>
+                  <td><span className="text-primary">đang truyền</span></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+
       </div>
     </div>
   );
