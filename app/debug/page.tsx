@@ -25,15 +25,9 @@ function u8(base64: string) {
 
 export default function DebugPage() {
   const supabase = getSupabase();
-
-  const [info, setInfo] = useState<Info>({
-    sw: 'checking',
-    permission: 'default',
-    subscribed: false,
-    vapidLen: VAPID_PUBLIC.length,
-  });
+  const [info, setInfo] = useState<Info>({ sw: 'checking', permission: 'default', subscribed: false, vapidLen: VAPID_PUBLIC.length });
   const [log, setLog] = useState<string>('');
-  const append = (s: string) => setLog(x => x + s + '\n');
+  const say = (s: string) => setLog(x => x + s + '\n');
 
   const refresh = async () => {
     try {
@@ -50,43 +44,40 @@ export default function DebugPage() {
         endpoint = sub?.endpoint;
       }
       const permission: Permission =
-        typeof window !== 'undefined' && 'Notification' in window
-          ? (Notification.permission as Permission)
-          : 'default';
+        typeof window !== 'undefined' && 'Notification' in window ? (Notification.permission as Permission) : 'default';
       setInfo({ sw, permission, subscribed, endpoint, vapidLen: VAPID_PUBLIC.length });
-    } catch (e: any) {
-      append('refresh error: ' + (e?.message || e));
-    }
+    } catch (e: any) { say('refresh error: ' + (e?.message || e)); }
   };
-
   useEffect(() => { refresh(); }, []);
 
   const doSubscribe = async () => {
     try {
-      if (!('Notification' in window)) return append('Trình duyệt không hỗ trợ Notification');
+      if (!('Notification' in window)) return say('Trình duyệt không hỗ trợ Notification');
       if (Notification.permission !== 'granted') {
         const p = await Notification.requestPermission();
-        if (p !== 'granted') return append('User denied notification');
+        if (p !== 'granted') return say('User denied notification');
       }
       const reg = await navigator.serviceWorker.ready;
       const sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: u8(VAPID_PUBLIC),
       });
+
       const rawKey = (key: string) =>
         btoa(String.fromCharCode.apply(null, new Uint8Array(sub.getKey(key) as ArrayBuffer) as unknown as number[]));
       const p256dh = rawKey('p256dh');
       const auth = rawKey('auth');
+
       const { data: u } = await supabase.auth.getUser();
-      await supabase.from('push_subscriptions').upsert(
+      const { error: upErr } = await supabase.from('push_subscriptions').upsert(
         { user_id: u.user?.id, endpoint: sub.endpoint, p256dh, auth },
         { onConflict: 'endpoint' }
       );
-      append('Subscribed & saved endpoint: ' + sub.endpoint.slice(0, 45) + '…');
+      if (upErr) say('save sub error: ' + upErr.message);
+      else say('Subscribed & saved endpoint: ' + sub.endpoint.slice(0, 45) + '…');
+
       refresh();
-    } catch (e: any) {
-      append('subscribe error: ' + (e?.message || e));
-    }
+    } catch (e: any) { say('subscribe error: ' + (e?.message || e)); }
   };
 
   const doUnsubscribe = async () => {
@@ -97,33 +88,25 @@ export default function DebugPage() {
         await supabase.from('push_subscriptions').delete().eq('endpoint', sub.endpoint);
         await sub.unsubscribe();
       }
-      append('Unsubscribed');
+      say('Unsubscribed');
       refresh();
-    } catch (e: any) {
-      append('unsubscribe error: ' + (e?.message || e));
-    }
+    } catch (e: any) { say('unsubscribe error: ' + (e?.message || e)); }
   };
 
-  // 👉 DÙNG SDK GỌI EDGE FUNCTION (không bị CORS)
+  // -> DÙNG SDK, KHÔNG CORS
   const testPushEmail = async () => {
     try {
       const { data: u } = await supabase.auth.getUser();
       const userId = u.user?.id;
-      if (!userId) return append('Chưa đăng nhập');
+      if (!userId) return say('Chưa đăng nhập');
 
       const { data, error } = await supabase.functions.invoke('send-notifications', {
         method: 'POST',
         body: { mode: 'test', user_id: userId },
       });
-
-      if (error) {
-        append('invoke error: ' + (error.message || JSON.stringify(error)));
-      } else {
-        append('TEST response: ' + JSON.stringify(data));
-      }
-    } catch (e: any) {
-      append('test error: ' + (e?.message || e));
-    }
+      if (error) say('invoke error: ' + (error.message || JSON.stringify(error)));
+      else       say('TEST response: ' + JSON.stringify(data));
+    } catch (e: any) { say('test error: ' + (e?.message || e)); }
   };
 
   return (
