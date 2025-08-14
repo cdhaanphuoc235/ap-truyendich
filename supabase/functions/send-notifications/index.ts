@@ -1,8 +1,11 @@
-// Deno runtime on Supabase Edge Functions
+// supabase/functions/send-notifications/index.ts
+// Deno runtime (Edge Function) - bản sạch, không lẫn ký tự thừa
+
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import webpush from "https://esm.sh/web-push@3.6.7";
 
+// ====== ENV (đã set bằng supabase secrets) ======
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
 
@@ -13,29 +16,32 @@ const EMAILJS_SERVICE_ID  = Deno.env.get("EMAILJS_SERVICE_ID")!;
 const EMAILJS_TEMPLATE_ID = Deno.env.get("EMAILJS_TEMPLATE_ID")!;
 const EMAILJS_PUBLIC_KEY  = Deno.env.get("EMAILJS_PUBLIC_KEY")!;
 
+// ====== INIT ======
 const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-
 webpush.setVapidDetails("mailto:noreply@example.com", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
+// ====== EmailJS helper ======
 async function sendEmail(to_email: string, subject: string, params: Record<string, string>) {
   const payload = {
     service_id: EMAILJS_SERVICE_ID,
     template_id: EMAILJS_TEMPLATE_ID,
     user_id: EMAILJS_PUBLIC_KEY,
-    template_params: { to_email, subject, ...params }
+    template_params: { to_email, subject, ...params },
   };
   const res = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`EmailJS ${res.status}: ${await res.text()}`);
 }
 
+// ====== Main ======
 serve(async (req) => {
   if (req.method !== "POST") return new Response("Use POST", { status: 405 });
 
   try {
+    // Lấy các ca có end_time trong ±1 phút, status='scheduled'
     const now = new Date();
     const from = new Date(now.getTime() - 60_000).toISOString();
     const to   = new Date(now.getTime() + 60_000).toISOString();
@@ -49,18 +55,18 @@ serve(async (req) => {
 
     if (qErr) throw qErr;
 
-    let pushCount = 0;
-    let emailCount = 0;
+    let pushCount = 0, emailCount = 0;
 
     for (const inf of infusions ?? []) {
+      const loc = [inf.room, inf.bed].filter(Boolean).join(" - ");
+      const title = "Kết thúc ca truyền";
+      const body  = `${inf.patient_name ?? "Bệnh nhân"}${loc ? ` (${loc})` : ""} đã đến giờ kết thúc.`;
+
+      // PUSH tới tất cả subscription của user
       const { data: subs } = await sb
         .from("push_subscriptions")
         .select("endpoint,p256dh,auth")
         .eq("user_id", inf.user_id);
-
-      const loc = [inf.room, inf.bed].filter(Boolean).join(" - ");
-      const title = "Kết thúc ca truyền";
-      const body = `${inf.patient_name ?? "Bệnh nhân"}${loc ? ` (${loc})` : ""} đã đến giờ kết thúc.`;
 
       for (const s of subs ?? []) {
         try {
@@ -78,6 +84,7 @@ serve(async (req) => {
         }
       }
 
+      // EMAIL (nếu được bật)
       if (inf.notify_email) {
         const { data: admin } = await sb.auth.admin.getUserById(inf.user_id);
         const toEmail = admin?.user?.email;
@@ -87,7 +94,7 @@ serve(async (req) => {
               patient_name: String(inf.patient_name ?? ""),
               room: String(inf.room ?? ""),
               bed: String(inf.bed ?? ""),
-              end_time: String(inf.end_time ?? "")
+              end_time: String(inf.end_time ?? ""),
             });
             emailCount++;
             await sb.from("notification_log").insert({ infusion_id: inf.id, channel: "email", status: "ok" });
@@ -99,13 +106,16 @@ serve(async (req) => {
         }
       }
 
+      // đánh dấu đã xử lý
       await sb.from("infusions").update({ status: "notified" }).eq("id", inf.id);
     }
 
-    return new Response(JSON.stringify({ pushCount, emailCount }), {
-      headers: { "Content-Type": "application/json" }
-    });
+    const result = { found: (infusions ?? []).length, pushCount, emailCount };
+    console.log(JSON.stringify(result));
+    return new Response(JSON.stringify(result), { headers: { "Content-Type": "application/json" } });
+
   } catch (e) {
+    console.error("send-notifications error:", e);
     return new Response(String(e?.message ?? e), { status: 500 });
   }
 });

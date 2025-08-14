@@ -1,3 +1,7 @@
 {
-  "imports": {}
+  "tasks": {
+    "start": "deno run -A --no-check index.ts"
+  },
+  "fmt": { "lineWidth": 100 },
+  "lint": { "rules": { "tags": ["recommended"] } }
 }
