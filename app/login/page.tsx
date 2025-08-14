@@ -57,7 +57,7 @@ export default function LoginPage() {
         />
         <h1 className="fw-bold mb-1">AP - Truyendich</h1>
         <p className="mb-3 opacity-75">
-          Ứng dụng tính thời gian truyền dịch cho điều dưỡng — bệnh viện An Phước
+          Ứng dụng tính thời gian truyền dịch cho điều dưỡng Bệnh viện An Phước
         </p>
         <p className="mb-4">Vui lòng đăng nhập</p>
 
