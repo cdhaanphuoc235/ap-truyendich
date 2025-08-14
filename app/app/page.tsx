@@ -5,8 +5,9 @@ import { getSupabase } from '@/lib/supabase';
 import PushToggle from './push-toggle';
 import InfusionForm from './infusion-form';
 import InfusionList from './infusion-list';
+import HistoryList from './history-list';       // <-- thêm
 import InstallPrompt from '../install-prompt';
-import NotifyClient from './notify-client'; // <-- thêm dòng này
+import NotifyClient from './notify-client';
 
 export default function AppPage() {
   const supabase = getSupabase();
@@ -27,9 +28,9 @@ export default function AppPage() {
   }
 
   return (
-    <div className="container py-4">
+    <div className="container py-3">
       <div className="d-flex justify-content-between align-items-center">
-        <h4>AP - Truyendich</h4>
+        <h5 className="mb-0">AP - Truyendich</h5>
         <button className="btn btn-outline-secondary btn-sm"
           onClick={() => supabase.auth.signOut().then(()=>location.href='/login')}>
           Đăng xuất
@@ -37,12 +38,26 @@ export default function AppPage() {
       </div>
 
       <InstallPrompt />
-      <PushToggle userId={session.user.id} />
+      <div className="d-flex align-items-center gap-2 mt-2">
+        <div className="alert alert-success flex-grow-1 py-2 px-3 mb-0">
+          <strong>Thông báo:</strong> <span className="text-success">ĐÃ BẬT</span>
+        </div>
+        {/* Nút bật/tắt + âm thanh */}
+        <div style={{minWidth: 220}}>
+          <PushToggle userId={session.user.id} />
+        </div>
+      </div>
 
       <InfusionForm userId={session.user.id} />
       <InfusionList userId={session.user.id} />
+      <HistoryList userId={session.user.id} />
 
-      <NotifyClient /> {/* hiện toast + beep khi app đang mở */}
+      <NotifyClient />
+
+      {/* Footer */}
+      <footer className="text-center text-muted small py-4">
+        Phát triển: <strong>Điều dưỡng An Phước</strong>
+      </footer>
     </div>
   );
 }

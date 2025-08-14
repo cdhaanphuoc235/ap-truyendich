@@ -11,12 +11,8 @@ type Infusion = {
   patient_name: string | null;
   room: string | null;
   bed: string | null;
-  volume_ml: number | null;
-  drip_rate_dpm: number | null;
-  drops_per_ml: number | null;
   start_time: string | null;
   end_time: string | null;
-  status: string | null;
 };
 
 function formatDuration(ms: number) {
@@ -36,60 +32,64 @@ export default function InfusionList({ userId }: Props) {
   const load = async () => {
     const { data, error } = await supabase
       .from('infusions')
-      .select('*')
+      .select('id,user_id,patient_name,room,bed,start_time,end_time')
       .eq('user_id', userId)
       .order('start_time', { ascending: false })
-      .limit(100);
+      .limit(200);
     if (!error) setRows(data as any);
   };
 
   useEffect(() => {
     load();
     const onCreated = () => load();
+    const onDeleted = () => load();
     window.addEventListener('infusion:created', onCreated);
-    const t = setInterval(() => setNow(Date.now()), 1000); // update countdown mỗi giây
+    window.addEventListener('infusion:deleted', onDeleted);
+    const t = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       window.removeEventListener('infusion:created', onCreated);
+      window.removeEventListener('infusion:deleted', onDeleted);
       clearInterval(t);
     };
   }, []);
 
-  const items = useMemo(() => rows.map(r => {
-    const end = r.end_time ? new Date(r.end_time).getTime() : 0;
-    const remain = end - now;
-    return { ...r, remain, endDate: end ? new Date(end) : null };
-  }), [rows, now]);
+  const items = useMemo(() => {
+    return (rows || [])
+      .map(r => {
+        const end = r.end_time ? new Date(r.end_time).getTime() : 0;
+        const remain = end - now;
+        return { ...r, remain, endDate: end ? new Date(end) : null };
+      })
+      .filter(r => r.remain > 0) // chỉ ca đang chạy
+      .sort((a, b) => (a.endDate?.getTime() || 0) - (b.endDate?.getTime() || 0));
+  }, [rows, now]);
 
   return (
     <div className="card mt-3">
       <div className="card-body">
-        <h5 className="card-title">Danh sách ca truyền</h5>
+        <h5 className="card-title">Danh sách ca truyền (đang chạy)</h5>
         <div className="table-responsive">
           <table className="table table-sm align-middle">
             <thead>
               <tr>
                 <th>Bệnh nhân</th>
-                <th>Phòng - Giường</th>
-                <th>Kết thúc</th>
+                <th className="d-none d-sm-table-cell">Phòng - Giường</th>
+                <th className="d-none d-sm-table-cell">Kết thúc</th>
                 <th>Đếm ngược</th>
-                <th>Trạng thái</th>
+                <th className="d-none d-md-table-cell">Trạng thái</th>
               </tr>
             </thead>
             <tbody>
               {items.length === 0 && (
-                <tr><td colSpan={5} className="text-muted">Chưa có ca nào.</td></tr>
+                <tr><td colSpan={5} className="text-muted">Không có ca đang chạy.</td></tr>
               )}
               {items.map(r => (
                 <tr key={r.id}>
                   <td>{r.patient_name || '-'}</td>
-                  <td>{[r.room, r.bed].filter(Boolean).join(' - ') || '-'}</td>
-                  <td>{r.endDate ? r.endDate.toLocaleString() : '-'}</td>
-                  <td>
-                    <span className={r.remain <= 0 ? 'text-danger fw-bold' : ''}>
-                      {formatDuration(r.remain)}
-                    </span>
-                  </td>
-                  <td>{r.status || 'scheduled'}</td>
+                  <td className="d-none d-sm-table-cell">{[r.room, r.bed].filter(Boolean).join(' - ') || '-'}</td>
+                  <td className="d-none d-sm-table-cell">{r.endDate ? r.endDate.toLocaleString() : '-'}</td>
+                  <td><span className="fw-bold">{formatDuration(r.remain)}</span></td>
+                  <td className="d-none d-md-table-cell"><span className="text-primary">đang truyền</span></td>
                 </tr>
               ))}
             </tbody>
