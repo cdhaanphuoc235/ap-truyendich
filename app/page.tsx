@@ -1,10 +1,8 @@
-import Link from 'next/link';
+'use client';
+
+import LoginPage from './login/page';
 
 export default function Home() {
-  return (
-    <div className="container py-5">
-      <h3>AP - Truyendich</h3>
-      <p>Vui lòng <Link href="/login">đăng nhập</Link> để tiếp tục.</p>
-    </div>
-  );
+  // Hiển thị trực tiếp màn hình login đẹp ở trang "/"
+  return <LoginPage />;
 }

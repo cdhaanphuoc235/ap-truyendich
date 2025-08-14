@@ -48,6 +48,12 @@ export default function LoginPage() {
           width={128}
           height={128}
           className="mb-3 rounded-3 shadow"
+          onError={(e) => {
+            // fallback nếu thiếu icon-512x512.png
+            const img = e.currentTarget as HTMLImageElement;
+            img.onerror = null;
+            img.src = '/icons/icon-512.png';
+          }}
         />
         <h1 className="fw-bold mb-1">AP - Truyendich</h1>
         <p className="mb-3 opacity-75">
@@ -55,10 +61,7 @@ export default function LoginPage() {
         </p>
         <p className="mb-4">Vui lòng đăng nhập</p>
 
-        <button
-          className="btn btn-light text-primary btn-lg w-100"
-          onClick={signIn}
-        >
+        <button className="btn btn-light text-primary btn-lg w-100" onClick={signIn}>
           Đăng nhập bằng Google
         </button>
 
