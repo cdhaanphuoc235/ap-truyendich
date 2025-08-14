@@ -1,67 +1,100 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+
+import { useEffect, useMemo, useState } from 'react';
+import { getSupabase } from '@/lib/supabase';
+
+type Props = { userId: string };
 
 type Infusion = {
-  id: string; user_id: string;
-  patient_name:string; drug_name:string; dose:string|null;
-  start_time:string; end_time:string; notes:string|null; status:string;
+  id: string;
+  user_id: string;
+  patient_name: string | null;
+  room: string | null;
+  bed: string | null;
+  volume_ml: number | null;
+  drip_rate_dpm: number | null;
+  drops_per_ml: number | null;
+  start_time: string | null;
+  end_time: string | null;
+  status: string | null;
 };
 
-const fmt = (ms:number) => {
-  const s = Math.max(0, Math.floor(ms/1000));
-  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), ss = s%60;
-  return `${h}h ${m}m ${ss}s`;
-};
+function formatDuration(ms: number) {
+  if (ms < 0) ms = 0;
+  const s = Math.floor(ms / 1000);
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return `${hh.toString().padStart(2,'0')}:${mm.toString().padStart(2,'0')}:${ss.toString().padStart(2,'0')}`;
+}
 
-export default function InfusionList({ userId }: { userId: string }) {
-  const [items, setItems] = useState<Infusion[]>([]);
+export default function InfusionList({ userId }: Props) {
+  const supabase = getSupabase();
+  const [rows, setRows] = useState<Infusion[]>([]);
+  const [now, setNow] = useState<number>(Date.now());
 
-  async function load() {
+  const load = async () => {
     const { data, error } = await supabase
       .from('infusions')
       .select('*')
       .eq('user_id', userId)
-      .order('end_time', { ascending: true });
-    if (!error && data) setItems(data as Infusion[]);
-    else {
-      // offline fallback
-      const local = JSON.parse(localStorage.getItem('infusions') || '[]');
-      setItems(local);
-    }
-  }
+      .order('start_time', { ascending: false })
+      .limit(100);
+    if (!error) setRows(data as any);
+  };
 
-  useEffect(() => { load(); }, []);
-
-  // Tick mỗi giây để render countdown
-  const [, setTick] = useState(0);
   useEffect(() => {
-    const t = setInterval(()=>setTick(x=>x+1), 1000);
-    return () => clearInterval(t);
+    load();
+    const onCreated = () => load();
+    window.addEventListener('infusion:created', onCreated);
+    const t = setInterval(() => setNow(Date.now()), 1000); // update countdown mỗi giây
+    return () => {
+      window.removeEventListener('infusion:created', onCreated);
+      clearInterval(t);
+    };
   }, []);
 
+  const items = useMemo(() => rows.map(r => {
+    const end = r.end_time ? new Date(r.end_time).getTime() : 0;
+    const remain = end - now;
+    return { ...r, remain, endDate: end ? new Date(end) : null };
+  }), [rows, now]);
+
   return (
-    <div className="card p-3">
-      <h5 className="mb-3">Danh sách ca truyền</h5>
-      <div className="table-responsive">
-        <table className="table table-sm align-middle">
-          <thead><tr><th>Bệnh nhân</th><th>Thuốc</th><th>Kết thúc</th><th>Đếm ngược</th><th>Trạng thái</th></tr></thead>
-          <tbody>
-            {items.map(it=>{
-              const ms = new Date(it.end_time).getTime() - Date.now();
-              const ended = ms<=0;
-              return (
-                <tr key={it.id}>
-                  <td>{it.patient_name}</td>
-                  <td>{it.drug_name} {it.dose||''}</td>
-                  <td>{new Date(it.end_time).toLocaleString()}</td>
-                  <td className={ended?'text-danger fw-bold':'text-success'}>{fmt(ms)}</td>
-                  <td>{ended?'Đến hạn':'Đang truyền'}</td>
+    <div className="card mt-3">
+      <div className="card-body">
+        <h5 className="card-title">Danh sách ca truyền</h5>
+        <div className="table-responsive">
+          <table className="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>Bệnh nhân</th>
+                <th>Phòng - Giường</th>
+                <th>Kết thúc</th>
+                <th>Đếm ngược</th>
+                <th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.length === 0 && (
+                <tr><td colSpan={5} className="text-muted">Chưa có ca nào.</td></tr>
+              )}
+              {items.map(r => (
+                <tr key={r.id}>
+                  <td>{r.patient_name || '-'}</td>
+                  <td>{[r.room, r.bed].filter(Boolean).join(' - ') || '-'}</td>
+                  <td>{r.endDate ? r.endDate.toLocaleString() : '-'}</td>
+                  <td>
+                    <span className={r.remain <= 0 ? 'text-danger fw-bold' : ''}>
+                      {formatDuration(r.remain)}
+                    </span>
+                  </td>
+                  <td>{r.status || 'scheduled'}</td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
