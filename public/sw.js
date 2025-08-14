@@ -1,44 +1,68 @@
-/* global self, clients */
-const CACHE = 'ap-truyendich-v1';
-const OFFLINE_URL = '/offline.html';
+/* public/sw.js - Push & notification handler */
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(['/', OFFLINE_URL]))
-  );
+self.addEventListener('install', (e) => {
   self.skipWaiting();
 });
-
-self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+self.addEventListener('activate', (e) => {
+  clients.claim();
 });
 
-self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    fetch(event.request).catch(async () => {
-      const cached = await caches.match(event.request);
-      if (cached) return cached;
-      return caches.match(OFFLINE_URL);
-    })
-  );
-});
+/** Utils */
+function parsePushData(event) {
+  try {
+    if (!event.data) return {};
+    const txt = event.data.text();
+    try { return JSON.parse(txt); } catch { return { body: txt }; }
+  } catch { return {}; }
+}
 
-// Nhận push và hiển thị notification
+async function notifyClients(msg) {
+  const all = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const c of all) c.postMessage(msg);
+}
+
+/** Handle Push -> show OS notification + message to pages (for in-app toast/sound) */
 self.addEventListener('push', (event) => {
-  const data = event.data ? event.data.json() : { title: 'Nhắc ca truyền', body: '' };
-  event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      icon: '/icons/icon-192.png',
-      badge: '/icons/icon-192.png',
-      data: data.data || {},
-      vibrate: [100, 50, 100]
-    })
-  );
+  const payload = parsePushData(event) || {};
+  const title = payload.title || 'Thông báo';
+  const body  = payload.body  || 'Đã đến giờ kết thúc ca truyền.';
+  const url   = (payload.data && payload.data.url) || '/';
+
+  const options = {
+    body,
+    icon: '/icons/icon-192x192.png',
+    badge: '/icons/icon-192x192.png',
+    vibrate: [200, 100, 200, 100, 300],
+    tag: 'infusion-alert',
+    renotify: true,
+    requireInteraction: true, // giữ notification trên màn hình tới khi người dùng tương tác
+    timestamp: Date.now(),
+    data: { url }
+  };
+
+  event.waitUntil((async () => {
+    await self.registration.showNotification(title, options);
+    // Báo cho các tab đang mở để hiện toast + phát âm thanh
+    await notifyClients({ type: 'INFUSION_ALERT', title, body, url });
+  })());
 });
 
+/** Click vào notification -> mở/đưa vào focus trang app */
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = event.notification.data?.url || '/';
-  event.waitUntil(clients.openWindow(url));
+  const url = (event.notification && event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil((async () => {
+    const all = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) {
+      if (new URL(c.url).pathname === url || new URL(c.url).pathname === '/') {
+        c.focus();
+        return;
+      }
+    }
+    await clients.openWindow(url);
+  })());
+});
+
+self.addEventListener('pushsubscriptionchange', () => {
+  // Trình duyệt có thể xoay vòng endpoint; app sẽ yêu cầu đăng ký lại khi mở.
 });

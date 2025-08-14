@@ -6,6 +6,7 @@ import PushToggle from './push-toggle';
 import InfusionForm from './infusion-form';
 import InfusionList from './infusion-list';
 import InstallPrompt from '../install-prompt';
+import NotifyClient from './notify-client'; // <-- thêm dòng này
 
 export default function AppPage() {
   const supabase = getSupabase();
@@ -36,11 +37,12 @@ export default function AppPage() {
       </div>
 
       <InstallPrompt />
-      <div className="alert alert-info mt-3 mb-2">Thông báo: <strong>ĐÃ BẬT</strong></div>
       <PushToggle userId={session.user.id} />
 
       <InfusionForm userId={session.user.id} />
       <InfusionList userId={session.user.id} />
+
+      <NotifyClient /> {/* hiện toast + beep khi app đang mở */}
     </div>
   );
 }
