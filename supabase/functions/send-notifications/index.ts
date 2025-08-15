@@ -1,161 +1,135 @@
-// deno-lint-ignore-file no-explicit-any
+// supabase/functions/send-notifications/index.ts
+// Deno Edge Function – GỬI EMAIL bằng Resend, KHÔNG dùng SDK Node
+
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import webpush from "npm:web-push@3.6.7";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-/** TRẢ CORS CHO MỌI REQUEST (đặc biệt là OPTIONS preflight) */
-function buildCorsHeaders(origin: string | null) {
-  // Nếu bạn set biến ALLOWED_ORIGIN, sẽ chỉ cho origin đó; nếu không, cho tất cả (*)
-  const allowed = Deno.env.get("ALLOWED_ORIGIN") ?? "*";
-  const value = allowed === "*" ? "*" : (origin && origin === allowed ? origin : allowed);
-  return {
-    "Access-Control-Allow-Origin": value,
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "authorization, content-type, x-client-info, apikey",
-    "Access-Control-Max-Age": "86400",
-    "Vary": "Origin",
-  };
-}
-const ok = (body: unknown, cors: Record<string, string>, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...cors } });
+// ==== ENV ====
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
+const RESEND_FROM = Deno.env.get("RESEND_FROM")!;
+const RESEND_FALLBACK_TO = Deno.env.get("RESEND_FALLBACK_TO") || "";
 
-/** Gửi email qua EmailJS REST */
-async function sendEmail(EMAILJS: {SERVICE_ID: string; TEMPLATE_ID: string; PUBLIC_KEY: string}, toEmail: string, params: Record<string, string>) {
-  const { SERVICE_ID, TEMPLATE_ID, PUBLIC_KEY } = EMAILJS;
-  try {
-    const r = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        service_id: SERVICE_ID,
-        template_id: TEMPLATE_ID,
-        user_id: PUBLIC_KEY,
-        template_params: { to_email: toEmail, ...params },
-      }),
-    });
-    if (!r.ok) throw new Error(await r.text());
-    return { ok: true };
-  } catch (e) { return { ok: false, error: String(e) }; }
-}
+// ==== Supabase client (service role) ====
+const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
 
-/** Gửi Web Push */
-async function sendPush(subscription: any, payload: any) {
-  try {
-    await webpush.sendNotification(subscription, JSON.stringify(payload));
-    return { ok: true };
-  } catch (e) { return { ok: false, error: String(e) }; }
+// Helper: gửi email qua Resend REST API (thuần fetch)
+async function sendEmail(to: string, subject: string, html: string) {
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ from: RESEND_FROM, to, subject, html }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    console.error("Resend error", res.status, body);
+    throw new Error(`Resend ${res.status}: ${body}`);
+  }
 }
 
 serve(async (req) => {
-  const cors = buildCorsHeaders(req.headers.get("Origin"));
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-
-  // ---- Chỉ sau khi pass preflight mới đọc ENV + khởi tạo client ----
-  const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("URL") ?? "";
-  const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
-  const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY") ?? "";
-  const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY") ?? "";
-  const EMAILJS = {
-    SERVICE_ID: Deno.env.get("EMAILJS_SERVICE_ID") ?? "",
-    TEMPLATE_ID: Deno.env.get("EMAILJS_TEMPLATE_ID") ?? "",
-    PUBLIC_KEY: Deno.env.get("EMAILJS_PUBLIC_KEY") ?? "",
-  };
-
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-    return ok({ ok: false, error: "Missing SUPABASE_URL/URL or SERVICE_ROLE_KEY" }, cors, 500);
-  }
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
-    return ok({ ok: false, error: "Missing VAPID keys" }, cors, 500);
-  }
-  webpush.setVapidDetails("mailto:no-reply@example.com", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-
-  // lấy body an toàn
-  let body: any = {};
-  try { body = await req.json(); } catch { /* ignore */ }
-
-  const mode = body?.mode; // 'test' | 'scan' hoặc undefined => quét scheduled
-  const nowISO = new Date().toISOString();
-
   try {
-    // TEST: gửi thử push/email cho user đầu tiên có subscription
-    if (mode === "test") {
-      const { data: s, error } = await supabase.from("push_subscriptions").select("endpoint,keys,user_id").limit(1);
-      if (error) throw error;
-      if (!s || !s.length) return ok({ ok: false, error: "No subscription found" }, cors, 400);
+    const url = new URL(req.url);
+    const dryRun = url.searchParams.has("dry_run");
 
-      const sub = s[0];
-      const payload = { title: "TEST • Đã hết giờ truyền!", body: "Chuông báo thử nghiệm", url: "/app", tag: "test" };
-      const p = await sendPush(sub, payload);
+    // Lấy những ca đang "scheduled" và đã đến hạn (end_time <= now)
+    const nowIso = new Date().toISOString();
+    const { data: due, error } = await sb
+      .from("infusions")
+      .select("id, user_id, patient_name, room, bed, end_time, notify_email")
+      .eq("status", "scheduled")
+      .lte("end_time", nowIso)
+      .limit(50);
 
-      // email demo tới chủ account
-      const { data: u } = await supabase.auth.admin.getUserById(sub.user_id);
-      const email = u.user?.email;
-      let em: any = { ok: false, skipped: true };
-      if (email) em = await sendEmail(EMAILJS, email, {
-        patient_name: "TEST",
-        room: "101",
-        bed: "01",
-        end_time: new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-      });
-
-      return ok({ ok: true, test: { push: p, email: em } }, cors);
+    if (error) {
+      return new Response(
+        JSON.stringify({ ok: false, message: error.message }),
+        { status: 500 },
+      );
     }
 
-    // SCAN: tìm các ca đến hạn và chưa done
-    const { data: due, error: dueErr } = await supabase
-      .from("infusions")
-      .select("id,user_id,patient_name,room,bed,end_time,notify_email,status")
-      .lte("end_time", nowISO)
-      .neq("status", "done");
-    if (dueErr) throw dueErr;
+    const items: unknown[] = [];
 
-    if (!due || !due.length) return ok({ ok: true, count: 0, message: "No due infusions" }, cors);
+    for (const row of due ?? []) {
+      // Bỏ qua nếu không bật nhận email
+      if (!row.notify_email) continue;
 
-    // gom subscriptions theo user
-    const ids = Array.from(new Set(due.map(d => d.user_id)));
-    const { data: subs, error: subErr } = await supabase
-      .from("push_subscriptions")
-      .select("endpoint,keys,user_id")
-      .in("user_id", ids);
-    if (subErr) throw subErr;
+      // Lấy email người tạo ca bằng Admin API (cần service role)
+      const { data: userRes, error: userErr } = await sb.auth.admin.getUserById(
+        row.user_id,
+      );
+      let to = userRes?.user?.email ?? RESEND_FALLBACK_TO;
 
-    let pushCount = 0, emailCount = 0;
-
-    for (const inf of due) {
-      const title = "Đã hết giờ truyền!";
-      const bodyTxt = `${inf.patient_name ?? "Bệnh nhân"} • P.${inf.room ?? ""} • G.${inf.bed ?? ""}`;
-      const payload = { title, body: bodyTxt, url: "/app", tag: `infusion-${inf.id}` };
-
-      for (const s of (subs || []).filter(x => x.user_id === inf.user_id)) {
-        const r = await sendPush(s, payload);
-        if (r.ok) pushCount++;
+      if (userErr) console.warn("getUserById error", userErr.message);
+      if (!to) {
+        console.warn("No recipient email for infusion", row.id);
+        continue;
       }
 
-      if (inf.notify_email) {
-        const { data: u } = await supabase.auth.admin.getUserById(inf.user_id);
-        const email = u.user?.email;
-        if (email) {
-          const endVN = new Date(inf.end_time).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
-          const r = await sendEmail(EMAILJS, email, {
-            patient_name: String(inf.patient_name ?? ""),
-            room: String(inf.room ?? ""),
-            bed: String(inf.bed ?? ""),
-            end_time: endVN,
+      const subject = `Ca truyền kết thúc - ${row.patient_name}`;
+      const endAt = new Date(row.end_time).toLocaleString("vi-VN");
+      const html = `
+        <p>Ca truyền của <b>${row.patient_name}</b> đã kết thúc.</p>
+        <ul>
+          <li>Phòng: <b>${row.room ?? "-"}</b></li>
+          <li>Giường: <b>${row.bed ?? "-"}</b></li>
+          <li>Thời điểm kết thúc: <b>${endAt}</b></li>
+        </ul>
+        <p>— AP Truyền dịch</p>
+      `;
+
+      items.push({
+        infusion_id: row.id,
+        email: { to, subject },
+      });
+
+      if (!dryRun) {
+        // 1) Gửi email
+        try {
+          await sendEmail(to, subject, html);
+        } catch (e) {
+          console.error("sendEmail failed", e);
+        }
+
+        // 2) Ghi log
+        try {
+          await sb.from("notification_log").insert({
+            infusion_id: row.id,
+            channel: "email",
+            meta: { to, subject },
           });
-          if (r.ok) emailCount++;
+        } catch (e) {
+          console.error("insert log failed", e);
+        }
+
+        // 3) Cập nhật trạng thái ca thành 'completed'
+        try {
+          await sb.from("infusions").update({ status: "completed" }).eq(
+            "id",
+            row.id,
+          );
+        } catch (e) {
+          console.error("update status failed", e);
         }
       }
     }
 
-    // đánh dấu done
-    const idsToDone = due.map(d => d.id);
-    await supabase.from("infusions").update({ status: "done" }).in("id", idsToDone);
-
-    return ok({ ok: true, count: due.length, pushCount, emailCount }, cors);
-  } catch (e) {
-    console.error(e);
-    return ok({ ok: false, error: String(e) }, cors, 500);
+    return new Response(
+      JSON.stringify({ ok: true, count: items.length, items, dry: dryRun }),
+      { headers: { "content-type": "application/json" } },
+    );
+  } catch (err) {
+    console.error("Function error", err);
+    return new Response(
+      JSON.stringify({ ok: false, message: String(err) }),
+      { status: 500 },
+    );
   }
 });
