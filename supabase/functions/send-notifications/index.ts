@@ -1,135 +1,131 @@
-// supabase/functions/send-notifications/index.ts
-// Deno Edge Function – GỬI EMAIL bằng Resend, KHÔNG dùng SDK Node
-
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+// deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// ==== ENV ====
+/**
+ * ENV cần có trong Secrets:
+ * - SUPABASE_URL
+ * - SUPABASE_SERVICE_ROLE_KEY (hoặc SERVICE_ROLE_KEY)
+ * - RESEND_API_KEY
+ * - RESEND_FROM           (ví dụ: 'AP Truyền dịch <onboarding@resend.dev>')
+ * - RESEND_FALLBACK_TO    (email fallback khi không lấy được email user)
+ * - ALLOWED_ORIGIN        (origin Netlify của bạn, ví dụ https://ap-truyendich.netlify.app)
+ */
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY")!;
+const SERVICE_KEY =
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? Deno.env.get("SERVICE_ROLE_KEY")!;
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY")!;
-const RESEND_FROM = Deno.env.get("RESEND_FROM")!;
-const RESEND_FALLBACK_TO = Deno.env.get("RESEND_FALLBACK_TO") || "";
+const RESEND_FROM = Deno.env.get("RESEND_FROM") || "AP Truyền dịch <onboarding@resend.dev>";
+const RESEND_FALLBACK_TO = Deno.env.get("RESEND_FALLBACK_TO") ?? "";
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") ?? "*";
 
-// ==== Supabase client (service role) ====
-const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
+const supa = createClient(SUPABASE_URL, SERVICE_KEY);
 
-// Helper: gửi email qua Resend REST API (thuần fetch)
-async function sendEmail(to: string, subject: string, html: string) {
+// Small helpers
+const json = (body: any, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "access-control-allow-origin": ALLOWED_ORIGIN,
+      "access-control-allow-methods": "GET,POST,OPTIONS",
+      "access-control-allow-headers": "authorization,content-type",
+    },
+  });
+
+async function getUserEmail(userId: string | null): Promise<string | null> {
+  if (!userId) return RESEND_FALLBACK_TO || null;
+  try {
+    const { data, error } = await supa.auth.admin.getUserById(userId);
+    if (error) return RESEND_FALLBACK_TO || null;
+    return data.user.email ?? (RESEND_FALLBACK_TO || null);
+  } catch {
+    return RESEND_FALLBACK_TO || null;
+  }
+}
+
+async function sendMail(to: string, subject: string, html: string) {
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${RESEND_API_KEY}`,
-      "Content-Type": "application/json",
+      "content-type": "application/json",
     },
     body: JSON.stringify({ from: RESEND_FROM, to, subject, html }),
   });
-
   if (!res.ok) {
-    const body = await res.text();
-    console.error("Resend error", res.status, body);
-    throw new Error(`Resend ${res.status}: ${body}`);
+    const t = await res.text().catch(() => "");
+    throw new Error(`Resend error ${res.status}: ${t}`);
   }
 }
 
-serve(async (req) => {
-  try {
-    const url = new URL(req.url);
-    const dryRun = url.searchParams.has("dry_run");
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return json({}, 200);
 
-    // Lấy những ca đang "scheduled" và đã đến hạn (end_time <= now)
-    const nowIso = new Date().toISOString();
-    const { data: due, error } = await sb
-      .from("infusions")
-      .select("id, user_id, patient_name, room, bed, end_time, notify_email")
-      .eq("status", "scheduled")
-      .lte("end_time", nowIso)
-      .limit(50);
+  const url = new URL(req.url);
+  const dryRun = url.searchParams.has("dry_run");
 
-    if (error) {
-      return new Response(
-        JSON.stringify({ ok: false, message: error.message }),
-        { status: 500 },
-      );
+  // 1) lấy danh sách ca cần thông báo (đến hạn, chưa gửi email)
+  const now = new Date().toISOString();
+  const { data: due, error } = await supa
+    .from("infusions")
+    .select(
+      "id,user_id,patient_name,room,bed,volume_ml,drip_rate_dpm,drops_per_ml,end_time,notify_email,email_sent_at,status"
+    )
+    .eq("status", "scheduled")
+    .lte("end_time", now)
+    .is("email_sent_at", null);
+
+  if (error) return json({ ok: false, message: error.message }, 500);
+
+  const items: any[] = [];
+  for (const row of due ?? []) {
+    const to = row.notify_email ? await getUserEmail(row.user_id) : null;
+
+    const subject = `Kết thúc truyền dịch – ${row.patient_name}`;
+    const html = `
+      <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; line-height:1.5">
+        <h2>Ca truyền đã hoàn tất</h2>
+        <p><strong>Bệnh nhân:</strong> ${row.patient_name}</p>
+        <p><strong>Phòng/Giường:</strong> ${[row.room, row.bed].filter(Boolean).join(" - ")}</p>
+        <p><strong>Giờ kết thúc:</strong> ${new Date(row.end_time).toLocaleString("vi-VN")}</p>
+        <hr />
+        <p>Đây là email tự động từ hệ thống AP - Truyền dịch.</p>
+      </div>
+    `;
+
+    // 2) gửi email (nếu người dùng tick nhận email)
+    if (to && !dryRun) {
+      try {
+        await sendMail(to, subject, html);
+      } catch (e) {
+        // không chặn cả lô, chỉ ghi lỗi và đi tiếp
+        items.push({ infusion_id: row.id, email_error: String(e) });
+      }
     }
 
-    const items: unknown[] = [];
-
-    for (const row of due ?? []) {
-      // Bỏ qua nếu không bật nhận email
-      if (!row.notify_email) continue;
-
-      // Lấy email người tạo ca bằng Admin API (cần service role)
-      const { data: userRes, error: userErr } = await sb.auth.admin.getUserById(
-        row.user_id,
-      );
-      let to = userRes?.user?.email ?? RESEND_FALLBACK_TO;
-
-      if (userErr) console.warn("getUserById error", userErr.message);
-      if (!to) {
-        console.warn("No recipient email for infusion", row.id);
-        continue;
-      }
-
-      const subject = `Ca truyền kết thúc - ${row.patient_name}`;
-      const endAt = new Date(row.end_time).toLocaleString("vi-VN");
-      const html = `
-        <p>Ca truyền của <b>${row.patient_name}</b> đã kết thúc.</p>
-        <ul>
-          <li>Phòng: <b>${row.room ?? "-"}</b></li>
-          <li>Giường: <b>${row.bed ?? "-"}</b></li>
-          <li>Thời điểm kết thúc: <b>${endAt}</b></li>
-        </ul>
-        <p>— AP Truyền dịch</p>
-      `;
-
-      items.push({
+    // 3) ghi log + cập nhật ca
+    if (!dryRun) {
+      // ghi log realtime (client sẽ nghe và popup)
+      await supa.from("notification_log").insert({
+        user_id: row.user_id,
         infusion_id: row.id,
-        email: { to, subject },
+        type: "email",
       });
 
-      if (!dryRun) {
-        // 1) Gửi email
-        try {
-          await sendEmail(to, subject, html);
-        } catch (e) {
-          console.error("sendEmail failed", e);
-        }
-
-        // 2) Ghi log
-        try {
-          await sb.from("notification_log").insert({
-            infusion_id: row.id,
-            channel: "email",
-            meta: { to, subject },
-          });
-        } catch (e) {
-          console.error("insert log failed", e);
-        }
-
-        // 3) Cập nhật trạng thái ca thành 'completed'
-        try {
-          await sb.from("infusions").update({ status: "completed" }).eq(
-            "id",
-            row.id,
-          );
-        } catch (e) {
-          console.error("update status failed", e);
-        }
-      }
+      await supa
+        .from("infusions")
+        .update({ email_sent_at: new Date().toISOString(), status: "finished" })
+        .eq("id", row.id);
     }
 
-    return new Response(
-      JSON.stringify({ ok: true, count: items.length, items, dry: dryRun }),
-      { headers: { "content-type": "application/json" } },
-    );
-  } catch (err) {
-    console.error("Function error", err);
-    return new Response(
-      JSON.stringify({ ok: false, message: String(err) }),
-      { status: 500 },
-    );
+    items.push({
+      infusion_id: row.id,
+      push: { sent: false }, // để dành nếu sau này bật push server-side
+      email: { willSend: !!to, to: to ?? undefined },
+      dry: dryRun,
+    });
   }
+
+  return json({ ok: true, count: items.length, items });
 });

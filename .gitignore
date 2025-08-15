@@ -1,24 +1,26 @@
-# build / tools
+# node / next
+node_modules/
 .next/
 out/
 dist/
-node_modules/
-.vscode/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+package-lock.json
 
-
+# env & secrets
 .env
-.env.local
 .env.*
-supabase/functions/.secrets.env
-.next/
-node_modules/
-dist/
-out/
-.vscode/
+!.env.example
+supabase/functions/**/.secrets.env
 
 # misc
-npm-debug.log*
-yarn-error.log*
-pnpm-debug.log*
 .DS_Store
+*.local
+*.log
 
+# netlify / supabase local
+.netlify/
+supabase/.temp/
