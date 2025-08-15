@@ -1,154 +1,161 @@
-// supabase/functions/send-notifications/index.ts
+// deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import webpush from "https://esm.sh/web-push@3.6.7";
+import webpush from "npm:web-push@3.6.7";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 
-// ====== ENV ======
-const SUPABASE_URL        = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY    = Deno.env.get("SERVICE_ROLE_KEY")!;
-const VAPID_PUBLIC_KEY    = Deno.env.get("VAPID_PUBLIC_KEY")!;
-const VAPID_PRIVATE_KEY   = Deno.env.get("VAPID_PRIVATE_KEY")!;
-const EMAILJS_SERVICE_ID  = Deno.env.get("EMAILJS_SERVICE_ID")!;
-const EMAILJS_TEMPLATE_ID = Deno.env.get("EMAILJS_TEMPLATE_ID")!;
-const EMAILJS_PUBLIC_KEY  = Deno.env.get("EMAILJS_PUBLIC_KEY")!;
-
-// Cho phép web gọi trực tiếp function (CORS)
-const APP_ORIGIN = Deno.env.get("APP_ORIGIN") || "*"; // có thể set chính xác: https://ap-truyendich.netlify.app
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": APP_ORIGIN,
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-webpush.setVapidDetails("mailto:noreply@example.com", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-
-// ====== EmailJS helper ======
-async function sendEmail(to_email: string, subject: string, params: Record<string, string>) {
-  const payload = {
-    service_id: EMAILJS_SERVICE_ID,
-    template_id: EMAILJS_TEMPLATE_ID,
-    user_id: EMAILJS_PUBLIC_KEY,
-    template_params: { to_email, subject, ...params },
+/** TRẢ CORS CHO MỌI REQUEST (đặc biệt là OPTIONS preflight) */
+function buildCorsHeaders(origin: string | null) {
+  // Nếu bạn set biến ALLOWED_ORIGIN, sẽ chỉ cho origin đó; nếu không, cho tất cả (*)
+  const allowed = Deno.env.get("ALLOWED_ORIGIN") ?? "*";
+  const value = allowed === "*" ? "*" : (origin && origin === allowed ? origin : allowed);
+  return {
+    "Access-Control-Allow-Origin": value,
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, content-type, x-client-info, apikey",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
   };
-  const res = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error(`EmailJS ${res.status}: ${await res.text()}`);
+}
+const ok = (body: unknown, cors: Record<string, string>, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...cors } });
+
+/** Gửi email qua EmailJS REST */
+async function sendEmail(EMAILJS: {SERVICE_ID: string; TEMPLATE_ID: string; PUBLIC_KEY: string}, toEmail: string, params: Record<string, string>) {
+  const { SERVICE_ID, TEMPLATE_ID, PUBLIC_KEY } = EMAILJS;
+  try {
+    const r = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        service_id: SERVICE_ID,
+        template_id: TEMPLATE_ID,
+        user_id: PUBLIC_KEY,
+        template_params: { to_email: toEmail, ...params },
+      }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e) }; }
 }
 
-// ====== Push helper ======
-async function sendPushToUser(user_id: string, title: string, body: string) {
-  const { data: subs } = await sb.from("push_subscriptions").select("endpoint,p256dh,auth").eq("user_id", user_id);
-  let ok = 0, err = 0;
-  for (const s of subs ?? []) {
-    try {
-      await webpush.sendNotification(
-        { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-        JSON.stringify({ title, body, data: { url: "/app" } })
-      );
-      ok++;
-    } catch (e) {
-      err++;
-      if (String(e).includes("410") || String(e).includes("404")) {
-        await sb.from("push_subscriptions").delete().eq("endpoint", s.endpoint);
-      }
-    }
-  }
-  return { ok, err };
+/** Gửi Web Push */
+async function sendPush(subscription: any, payload: any) {
+  try {
+    await webpush.sendNotification(subscription, JSON.stringify(payload));
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e) }; }
 }
 
-// ====== Main ======
 serve(async (req) => {
-  // Preflight cho CORS
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: CORS_HEADERS });
+  const cors = buildCorsHeaders(req.headers.get("Origin"));
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+
+  // ---- Chỉ sau khi pass preflight mới đọc ENV + khởi tạo client ----
+  const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? Deno.env.get("URL") ?? "";
+  const SERVICE_ROLE_KEY = Deno.env.get("SERVICE_ROLE_KEY") ?? "";
+  const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY") ?? "";
+  const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY") ?? "";
+  const EMAILJS = {
+    SERVICE_ID: Deno.env.get("EMAILJS_SERVICE_ID") ?? "",
+    TEMPLATE_ID: Deno.env.get("EMAILJS_TEMPLATE_ID") ?? "",
+    PUBLIC_KEY: Deno.env.get("EMAILJS_PUBLIC_KEY") ?? "",
+  };
+
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+    return ok({ ok: false, error: "Missing SUPABASE_URL/URL or SERVICE_ROLE_KEY" }, cors, 500);
   }
-  if (req.method !== "POST") {
-    return new Response("Use POST", { status: 405, headers: CORS_HEADERS });
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) {
+    return ok({ ok: false, error: "Missing VAPID keys" }, cors, 500);
   }
+  webpush.setVapidDetails("mailto:no-reply@example.com", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+
+  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+
+  // lấy body an toàn
+  let body: any = {};
+  try { body = await req.json(); } catch { /* ignore */ }
+
+  const mode = body?.mode; // 'test' | 'scan' hoặc undefined => quét scheduled
+  const nowISO = new Date().toISOString();
 
   try {
-    let bodyJson: any = null;
-    if (req.headers.get("content-type")?.includes("application/json")) {
-      try { bodyJson = await req.json(); } catch {}
+    // TEST: gửi thử push/email cho user đầu tiên có subscription
+    if (mode === "test") {
+      const { data: s, error } = await supabase.from("push_subscriptions").select("endpoint,keys,user_id").limit(1);
+      if (error) throw error;
+      if (!s || !s.length) return ok({ ok: false, error: "No subscription found" }, cors, 400);
+
+      const sub = s[0];
+      const payload = { title: "TEST • Đã hết giờ truyền!", body: "Chuông báo thử nghiệm", url: "/app", tag: "test" };
+      const p = await sendPush(sub, payload);
+
+      // email demo tới chủ account
+      const { data: u } = await supabase.auth.admin.getUserById(sub.user_id);
+      const email = u.user?.email;
+      let em: any = { ok: false, skipped: true };
+      if (email) em = await sendEmail(EMAILJS, email, {
+        patient_name: "TEST",
+        room: "101",
+        bed: "01",
+        end_time: new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+      });
+
+      return ok({ ok: true, test: { push: p, email: em } }, cors);
     }
 
-    // ===== Test mode: gửi ngay cho user hiện tại (gọi từ /debug) =====
-    if (bodyJson?.mode === "test") {
-      const user_id: string | undefined = bodyJson.user_id;
-      if (!user_id) return new Response("Missing user_id", { status: 400, headers: CORS_HEADERS });
-
-      const { data: admin } = await sb.auth.admin.getUserById(user_id);
-      const email = admin?.user?.email || "";
-
-      const title = "Test thông báo";
-      const body  = "Đây là thông báo thử (Push + Email).";
-
-      const p = await sendPushToUser(user_id, title, body);
-
-      let emailOk = false, emailErr: string | null = null;
-      if (email) {
-        try {
-          await sendEmail(email, title, { patient_name: "", room: "", bed: "", end_time: new Date().toISOString() });
-          emailOk = true;
-        } catch (e) { emailErr = String(e); }
-      }
-
-      const result = { mode: "test", push: p, email: { ok: emailOk, err: emailErr } };
-      console.log(JSON.stringify(result));
-      return new Response(JSON.stringify(result), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
-    }
-
-    // ===== Scheduled mode: quét ca sắp kết thúc (±1 phút) =====
-    const now = new Date();
-    const from = new Date(now.getTime() - 60_000).toISOString();
-    const to   = new Date(now.getTime() + 60_000).toISOString();
-
-    const { data: infusions, error: qErr } = await sb
+    // SCAN: tìm các ca đến hạn và chưa done
+    const { data: due, error: dueErr } = await supabase
       .from("infusions")
       .select("id,user_id,patient_name,room,bed,end_time,notify_email,status")
-      .gte("end_time", from).lte("end_time", to).eq("status", "scheduled");
-    if (qErr) throw qErr;
+      .lte("end_time", nowISO)
+      .neq("status", "done");
+    if (dueErr) throw dueErr;
+
+    if (!due || !due.length) return ok({ ok: true, count: 0, message: "No due infusions" }, cors);
+
+    // gom subscriptions theo user
+    const ids = Array.from(new Set(due.map(d => d.user_id)));
+    const { data: subs, error: subErr } = await supabase
+      .from("push_subscriptions")
+      .select("endpoint,keys,user_id")
+      .in("user_id", ids);
+    if (subErr) throw subErr;
 
     let pushCount = 0, emailCount = 0;
-    for (const inf of infusions ?? []) {
-      const loc = [inf.room, inf.bed].filter(Boolean).join(" - ");
-      const title = "Kết thúc ca truyền";
-      const body  = `${inf.patient_name ?? "Bệnh nhân"}${loc ? ` (${loc})` : ""} đã đến giờ kết thúc.`;
 
-      const p = await sendPushToUser(inf.user_id, title, body);
-      pushCount += p.ok;
+    for (const inf of due) {
+      const title = "Đã hết giờ truyền!";
+      const bodyTxt = `${inf.patient_name ?? "Bệnh nhân"} • P.${inf.room ?? ""} • G.${inf.bed ?? ""}`;
+      const payload = { title, body: bodyTxt, url: "/app", tag: `infusion-${inf.id}` };
 
-      if (inf.notify_email) {
-        const { data: admin } = await sb.auth.admin.getUserById(inf.user_id);
-        const email = admin?.user?.email || "";
-        if (email) {
-          try {
-            await sendEmail(email, title, {
-              patient_name: String(inf.patient_name ?? ""),
-              room: String(inf.room ?? ""),
-              bed: String(inf.bed ?? ""),
-              end_time: String(inf.end_time ?? "")
-            });
-            emailCount++;
-          } catch (e) {
-            await sb.from("notification_log").insert({ infusion_id: inf.id, channel: "email", status: "error", error: String(e) });
-          }
-        }
+      for (const s of (subs || []).filter(x => x.user_id === inf.user_id)) {
+        const r = await sendPush(s, payload);
+        if (r.ok) pushCount++;
       }
 
-      await sb.from("infusions").update({ status: "notified" }).eq("id", inf.id);
+      if (inf.notify_email) {
+        const { data: u } = await supabase.auth.admin.getUserById(inf.user_id);
+        const email = u.user?.email;
+        if (email) {
+          const endVN = new Date(inf.end_time).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+          const r = await sendEmail(EMAILJS, email, {
+            patient_name: String(inf.patient_name ?? ""),
+            room: String(inf.room ?? ""),
+            bed: String(inf.bed ?? ""),
+            end_time: endVN,
+          });
+          if (r.ok) emailCount++;
+        }
+      }
     }
 
-    const result = { found: (infusions ?? []).length, pushCount, emailCount };
-    console.log(JSON.stringify(result));
-    return new Response(JSON.stringify(result), { headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
+    // đánh dấu done
+    const idsToDone = due.map(d => d.id);
+    await supabase.from("infusions").update({ status: "done" }).in("id", idsToDone);
 
-  } catch (e: any) {
-    console.error("send-notifications error:", e);
-    return new Response(String(e?.message ?? e), { status: 500, headers: CORS_HEADERS });
+    return ok({ ok: true, count: due.length, pushCount, emailCount }, cors);
+  } catch (e) {
+    console.error(e);
+    return ok({ ok: false, error: String(e) }, cors, 500);
   }
 });

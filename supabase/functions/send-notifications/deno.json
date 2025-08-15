@@ -1,7 +1,6 @@
 {
-  "tasks": {
-    "start": "deno run -A --no-check index.ts"
+  "deploy": {
+    "exclude": ["**/node_modules"]
   },
-  "fmt": { "lineWidth": 100 },
-  "lint": { "rules": { "tags": ["recommended"] } }
+  "tasks": {}
 }
