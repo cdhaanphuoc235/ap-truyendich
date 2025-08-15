@@ -1,36 +1,47 @@
 // app/api/notify/route.ts
 import { NextResponse } from "next/server";
 
-/**
- * Proxy server-side -> gọi Supabase Edge Function
- * Ưu điểm: không CORS, không lộ SERVICE_ROLE_KEY ra client
- */
+const SUPABASE_URL =
+  process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SERVICE_ROLE_KEY =
+  process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const SERVICE_ROLE_KEY = process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-
-if (!SUPABASE_URL) {
-  console.warn("[/api/notify] Missing SUPABASE_URL env");
-}
-if (!SERVICE_ROLE_KEY) {
-  console.warn("[/api/notify] Missing SERVICE_ROLE_KEY env");
-}
-
+/** Gọi Edge Function ở Supabase (server -> server, không CORS) */
 async function callEdge(mode: string) {
-  const url = `${SUPABASE_URL}/functions/v1/send-notifications`;
-  const r = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // SERVICE_ROLE_KEY chỉ dùng server -> server. KHÔNG dùng ở client!
-      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
-    },
-    body: JSON.stringify({ mode }),
-  });
-  const data = await r
-    .json()
-    .catch(() => ({ ok: false, error: "Invalid JSON from function" }));
-  return { status: r.status, data };
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
+    const miss = {
+      SUPABASE_URL: !!SUPABASE_URL,
+      SERVICE_ROLE_KEY: !!SERVICE_ROLE_KEY,
+    };
+    return {
+      status: 500,
+      data: { ok: false, reason: "missing_env", missing: miss },
+    };
+  }
+
+  // Chuẩn hóa URL (tránh //)
+  const base = SUPABASE_URL.replace(/\/+$/, "");
+  const url = `${base}/functions/v1/send-notifications`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({ mode }),
+    });
+  } catch (e: any) {
+    return { status: 502, data: { ok: false, reason: "fetch_failed", error: String(e?.message || e) } };
+  }
+
+  const text = await res.text();
+  let json: any = text;
+  try { json = JSON.parse(text); } catch {}
+
+  return { status: res.status, data: json };
 }
 
 export async function GET(req: Request) {
@@ -42,7 +53,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
-  const mode = body?.mode || "scan"; // "test" | "scan"
+  const mode = body?.mode || "scan";
   const { status, data } = await callEdge(mode);
   return NextResponse.json(data, { status });
 }
