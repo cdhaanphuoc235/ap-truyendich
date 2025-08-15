@@ -1,330 +1,483 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 
-// --- Supabase browser client (giữ nguyên env bạn đang có trên Netlify) ---
+/** ============ Supabase client ============ */
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const sb = createClient(supabaseUrl, supabaseAnonKey);
+const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: true, autoRefreshToken: true },
+});
 
-// Kiểu dữ liệu form
-type FormState = {
-  patient_name: string;
-  room: string;
-  bed: string;
-  volume: number | '' ;           // ml
-  drip_rate_dpm: number | '';     // giọt/phút
-  drops_per_ml: number | '';      // giọt/ml (mặc định 20)
-  notes: string;
-  notify_email: boolean;
-};
-
-// Tính thời gian kết thúc (phút) theo công thức
-const calcMinutes = (volume: number, dripRate: number, dropsPerMl: number) => {
-  if (!volume || !dripRate || !dropsPerMl) return 0;
-  return Math.round((volume * dropsPerMl) / dripRate);
-};
-
-export default function Page() {
-  // Thông tin người dùng (để hiện email + logout)
-  const [userEmail, setUserEmail] = useState<string>('');
-
-  // Trạng thái âm thanh khi app mở (giữ nguyên id & cấu trúc để code cũ dùng)
-  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-
-  // Form
-  const [form, setForm] = useState<FormState>({
-    patient_name: '',
-    room: '',
-    bed: '',
-    volume: '',
-    drip_rate_dpm: '',
-    drops_per_ml: 20,
-    notes: '',
-    notify_email: false,
-  });
-
-  // Tính trước phút và giờ kết thúc hiển thị ngay cho người dùng
-  const minutes = useMemo(() => {
-    const v = Number(form.volume || 0);
-    const r = Number(form.drip_rate_dpm || 0);
-    const d = Number(form.drops_per_ml || 0);
-    return calcMinutes(v, r, d);
-  }, [form.volume, form.drip_rate_dpm, form.drops_per_ml]);
-
-  const previewEndTime = useMemo(() => {
-    if (!minutes) return '';
-    const d = new Date(Date.now() + minutes * 60 * 1000);
-    return d.toLocaleString();
-  }, [minutes]);
-
-  // Lấy thông tin user hiện tại để hiển thị email
+/** ============ SW register (giữ yêu cầu <SwRegister />) ============ */
+function SwRegister() {
   useEffect(() => {
-    sb.auth.getUser().then((res) => {
-      const email = res.data.user?.email || '';
-      setUserEmail(email);
+    if ('serviceWorker' in navigator) {
+      const url = '/sw.js';
+      navigator.serviceWorker
+        .register(url)
+        .catch(() => {
+          /* ignore */
+        });
+    }
+  }, []);
+  return null;
+}
+
+/** ============ Kiểu dữ liệu ============ */
+type InfusionRow = {
+  id: string;
+  user_id: string | null;
+  patient_name: string | null;
+  room: string | null;
+  bed: string | null;
+  volume: number | null;          // ml
+  drip_rate_dpm: number | null;   // giọt/phút
+  drops_per_ml: number | null;    // giọt/ml
+  notes: string | null;
+  start_time: string;             // ISO
+  end_time: string;               // ISO
+  notify_email: boolean | null;
+  email_sent_at: string | null;   // đã gửi email (Edge Function) hay chưa
+};
+
+function toNumber(v: string): number | null {
+  if (!v) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** ============ Trang chính ============ */
+export default function Page() {
+  /** Auth */
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  /** Form state */
+  const [patientName, setPatientName] = useState('');
+  const [room, setRoom] = useState('');
+  const [bed, setBed] = useState('');
+  const [volume, setVolume] = useState('');           // ml
+  const [dropsPerMl, setDropsPerMl] = useState('20'); // giọt/ml (để TRÊN)
+  const [dripRate, setDripRate] = useState('');       // giọt/phút
+  const [notes, setNotes] = useState('');
+  const [notifyEmail, setNotifyEmail] = useState(false);
+
+  /** UI / âm thanh */
+  const [beepEnabled, setBeepEnabled] = useState(true);
+  const beepRef = useRef<HTMLAudioElement | null>(null);
+
+  /** Danh sách ca đang chạy & lịch sử */
+  const [running, setRunning] = useState<InfusionRow[]>([]);
+  const [history, setHistory] = useState<InfusionRow[]>([]);
+
+  /** Tải user */
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      setUser(user ?? null);
+      setLoading(false);
+    })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
+      setUser(s?.user ?? null);
     });
+    return () => sub.subscription.unsubscribe();
   }, []);
 
-  const onChange = (field: keyof FormState, value: string | number | boolean) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
-  };
+  /** Tính thời điểm kết thúc dự kiến */
+  const endTimePreview = useMemo(() => {
+    const v = toNumber(volume);
+    const dpm = toNumber(dripRate);
+    const dpmMl = toNumber(dropsPerMl);
+    if (!v || !dpm || !dpmMl || dpm <= 0) return null;
+    // thời gian (phút) = (thể tích * giọt/ml) / (giọt/phút)
+    const minutes = (v * dpmMl) / dpm;
+    const end = new Date(Date.now() + minutes * 60_000);
+    return end;
+  }, [volume, dripRate, dropsPerMl]);
 
-  const handleLogout = async () => {
-    await sb.auth.signOut();
-    window.location.reload();
-  };
+  /** Lấy danh sách */
+  async function fetchLists() {
+    if (!user) return;
 
-  // Submit: gọi đúng API/DB của bạn như trước đây
-  const handleStart = async () => {
-    // Validate nhẹ
-    if (!form.patient_name || !form.room || !form.bed) {
-      alert('Vui lòng nhập đầy đủ: Bệnh nhân / Phòng / Giường.');
-      return;
-    }
-    if (!form.volume || !form.drip_rate_dpm || !form.drops_per_ml) {
-      alert('Vui lòng nhập Thể tích, Tốc độ truyền và Số giọt/ml.');
-      return;
-    }
-
-    // Tính giờ kết thúc
-    const mins = calcMinutes(
-      Number(form.volume),
-      Number(form.drip_rate_dpm),
-      Number(form.drops_per_ml)
-    );
-    const end = new Date(Date.now() + mins * 60 * 1000);
-
-    // Lấy user_id để lưu (email gửi về chính account đăng nhập)
-    const { data: { user } } = await sb.auth.getUser();
-
-    // Insert như code hiện tại của bạn (đặt đúng tên cột hiện có)
-    const { error } = await sb
+    // đang chạy: end_time >= now
+    const { data: r1 } = await supabase
       .from('infusions')
-      .insert({
-        user_id: user?.id ?? null,
-        patient_name: form.patient_name.trim(),
-        room: form.room.trim(),
-        bed: form.bed.trim(),
-        volume: Number(form.volume),
-        drip_rate_dpm: Number(form.drip_rate_dpm),
-        drops_per_ml: Number(form.drops_per_ml),
-        notes: form.notes?.trim() || null,
-        start_time: new Date().toISOString(),
-        end_time: end.toISOString(),
-        status: 'scheduled',
-        notify_email: !!form.notify_email, // <-- quan trọng: lưu đúng cờ người dùng tick
-      });
+      .select('*')
+      .eq('user_id', user.id)
+      .gte('end_time', new Date().toISOString())
+      .order('end_time', { ascending: true }) as { data: InfusionRow[] | null };
 
-    if (error) {
-      console.error(error);
-      alert('Lỗi lưu ca truyền. Vui lòng thử lại!');
+    // lịch sử: end_time < now (hiển thị đã kết thúc)
+    const { data: r2 } = await supabase
+      .from('infusions')
+      .select('*')
+      .eq('user_id', user.id)
+      .lt('end_time', new Date().toISOString())
+      .order('end_time', { ascending: false }) as { data: InfusionRow[] | null };
+
+    setRunning(r1 ?? []);
+    setHistory(r2 ?? []);
+  }
+
+  useEffect(() => {
+    if (!user) return;
+    fetchLists();
+
+    // refresh mỗi 20s để đếm ngược mượt
+    const t = setInterval(fetchLists, 20_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  /** Đăng nhập/Đăng xuất */
+  const signIn = async () => {
+    await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.href } });
+  };
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    // về màn login
+    location.reload();
+  };
+
+  /** Thêm ca */
+  const startInfusion = async () => {
+    if (!user) return alert('Vui lòng đăng nhập');
+    const v = toNumber(volume);
+    const dpm = toNumber(dripRate);
+    const dpmMl = toNumber(dropsPerMl);
+    if (!patientName || !room || !bed || !v || !dpm || !dpmMl || dpm <= 0) {
+      alert('Vui lòng nhập đủ thông tin hợp lệ.');
       return;
     }
+    const now = new Date();
+    const minutes = (v * dpmMl) / dpm;
+    const end = new Date(now.getTime() + minutes * 60_000);
 
-    // Reset form đơn giản
-    setForm((prev) => ({
-      ...prev,
-      patient_name: '',
-      room: '',
-      bed: '',
-      volume: '',
-      drip_rate_dpm: '',
-      drops_per_ml: prev.drops_per_ml || 20,
-      notes: '',
-      notify_email: prev.notify_email, // giữ nguyên tick theo thói quen người dùng
-    }));
+    const { error } = await supabase.from('infusions').insert({
+      user_id: user.id,
+      patient_name: patientName.trim(),
+      room: room.trim(),
+      bed: bed.trim(),
+      volume: v,
+      drip_rate_dpm: dpm,
+      drops_per_ml: dpmMl,
+      notes: notes.trim() || null,
+      start_time: now.toISOString(),
+      end_time: end.toISOString(),
+      notify_email: notifyEmail,
+    });
+    if (error) {
+      alert('Lỗi lưu ca truyền. Vui lòng thử lại.');
+      return;
+    }
+    // reset form nhẹ
+    setPatientName('');
+    setRoom('');
+    setBed('');
+    setVolume('');
+    setDripRate('');
+    setNotes('');
+    // giữ nguyên dropsPerMl & notifyEmail theo thói quen nhập
+    await fetchLists();
   };
+
+  /** Phát âm khi bấm test (tùy chọn) */
+  useEffect(() => {
+    if (!beepRef.current) {
+      beepRef.current = new Audio('/alarm.mp3'); // đã có trong public; nếu không có sẽ ignore
+    }
+  }, []);
+
+  /** Helper hiển thị đồng hồ đếm ngược */
+  function renderCountdown(endISO: string) {
+    const end = new Date(endISO).getTime();
+    const now = Date.now();
+    const ms = Math.max(0, end - now);
+    const s = Math.floor(ms / 1000);
+    const hh = Math.floor(s / 3600);
+    const mm = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    return `${hh.toString().padStart(2, '0')}:${mm.toString().padStart(2, '0')}:${ss
+      .toString()
+      .padStart(2, '0')}`;
+  }
+
+  /** ================= RENDER ================= */
+  if (loading) return <div className="p-6">Đang tải…</div>;
+
+  if (!user) {
+    // Màn đăng nhập gọn (màu xanh như yêu cầu cũ)
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-blue-600 text-white">
+        <SwRegister />
+        <div className="max-w-md w-full px-6 py-10">
+          <div className="text-3xl font-bold mb-2 text-center">AP - Truyendich</div>
+          <p className="text-center mb-6">
+            Ứng dụng tính thời gian truyền dịch cho điều dưỡng – Bệnh viện An Phước
+          </p>
+          <button
+            onClick={signIn}
+            className="w-full py-3 rounded-lg bg-white text-blue-700 font-semibold shadow"
+          >
+            Đăng nhập bằng Google
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <div className="container py-3">
+    <main className="max-w-3xl mx-auto px-4 py-5">
+      <SwRegister />
 
-      {/* HEADER */}
-      <div className="d-flex align-items-center justify-content-between mb-3">
-        <div className="d-flex align-items-start">
-          <div>
-            <h3 className="mb-1 fw-bold">AP - Truyendich</h3>
-            <small className="text-muted">
-              Đăng nhập:
-              {' '}
-              <strong>{userEmail || '...'}</strong>
-            </small>
-          </div>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <h1 className="text-2xl font-bold">AP - Truyendich</h1>
+          <div className="text-sm text-gray-500">Đăng nhập: {user.email ?? '...'}</div>
         </div>
 
-        <div className="d-flex align-items-center gap-2">
-          {/* Bật/Tắt âm thanh khi app mở (giữ lại để code cũ đọc state này nếu cần) */}
-          <div className="form-check form-switch me-2">
+        <div className="flex items-center gap-4">
+          <label className="inline-flex items-center gap-2 cursor-pointer">
             <input
-              id="sound-switch"
-              className="form-check-input"
               type="checkbox"
-              role="switch"
-              checked={soundEnabled}
-              onChange={(e) => setSoundEnabled(e.target.checked)}
+              checked={beepEnabled}
+              onChange={(e) => setBeepEnabled(e.target.checked)}
             />
-            <label className="form-check-label" htmlFor="sound-switch">
-              Âm thanh khi app đang mở
-            </label>
-          </div>
+            <span>Âm thanh khi app đang mở</span>
+          </label>
 
-          {/* Đăng xuất */}
-          <button className="btn btn-outline-danger btn-sm" onClick={handleLogout}>
+          <button
+            onClick={signOut}
+            className="px-3 py-2 rounded border border-red-300 text-red-600 hover:bg-red-50"
+          >
             Đăng xuất
           </button>
         </div>
       </div>
 
-      {/* FORM TẠO CA TRUYỀN */}
-      <div className="card shadow-sm mb-3">
-        <div className="card-body">
-          <h5 className="card-title mb-3">Tạo ca truyền</h5>
+      {/* Form */}
+      <section className="rounded-lg border p-4 mb-6">
+        <h2 className="text-xl font-semibold mb-4">Tạo ca truyền</h2>
 
-          {/* Hàng 1: Bệnh nhân / Phòng / Giường */}
-          <div className="row g-3">
-            <div className="col-12 col-md-4">
-              <label className="form-label">Bệnh nhân</label>
-              <input
-                className="form-control"
-                placeholder="VD: Phạm Văn A"
-                value={form.patient_name}
-                onChange={(e) => onChange('patient_name', e.target.value)}
-              />
-            </div>
-
-            <div className="col-6 col-md-4">
-              <label className="form-label">Phòng</label>
-              <input
-                className="form-control"
-                placeholder="VD: 305"
-                value={form.room}
-                onChange={(e) => onChange('room', e.target.value)}
-              />
-            </div>
-
-            <div className="col-6 col-md-4">
-              <label className="form-label">Giường</label>
-              <input
-                className="form-control"
-                placeholder="VD: 12B"
-                value={form.bed}
-                onChange={(e) => onChange('bed', e.target.value)}
-              />
-            </div>
-          </div>
-
-          {/* Hàng 2: Thể tích / Tốc độ / Số giọt/ml */}
-          <div className="row g-3 mt-1">
-            <div className="col-12 col-md-4">
-              <label className="form-label">Thể tích (ml)</label>
-              <input
-                type="number"
-                min={0}
-                className="form-control"
-                placeholder="VD: 500"
-                value={form.volume}
-                onChange={(e) => onChange('volume', e.target.value === '' ? '' : Number(e.target.value))}
-              />
-            </div>
-
-            <div className="col-6 col-md-4">
-              <label className="form-label">Tốc độ truyền (giọt/phút)</label>
-              <input
-                type="number"
-                min={1}
-                className="form-control"
-                placeholder="VD: 25"
-                value={form.drip_rate_dpm}
-                onChange={(e) => onChange('drip_rate_dpm', e.target.value === '' ? '' : Number(e.target.value))}
-              />
-            </div>
-
-            <div className="col-6 col-md-4">
-              <label className="form-label">Số giọt/ml</label>
-              <input
-                type="number"
-                min={1}
-                className="form-control"
-                placeholder="VD: 20"
-                value={form.drops_per_ml}
-                onChange={(e) => onChange('drops_per_ml', e.target.value === '' ? '' : Number(e.target.value))}
-              />
-            </div>
-          </div>
-
-          {/* Ghi chú */}
-          <div className="mt-3">
-            <label className="form-label">Ghi chú</label>
-            <textarea
-              className="form-control"
-              rows={3}
-              placeholder="..."
-              value={form.notes}
-              onChange={(e) => onChange('notes', e.target.value)}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Bệnh nhân */}
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium mb-1">Bệnh nhân</label>
+            <input
+              value={patientName}
+              onChange={(e) => setPatientName(e.target.value)}
+              placeholder="VD: Phạm Văn A"
+              className="w-full rounded border px-3 py-2"
             />
           </div>
 
-          {/* Hàng 3: Checkbox + nút Bắt đầu + xem giờ kết thúc */}
-          <div className="d-flex flex-column flex-md-row align-items-md-center justify-content-between mt-3">
-            <div className="form-check">
-              <input
-                id="notify-email"
-                className="form-check-input"
-                type="checkbox"
-                checked={form.notify_email}
-                onChange={(e) => onChange('notify_email', e.target.checked)}
-              />
-              <label className="form-check-label" htmlFor="notify-email">
-                Nhận email khi ca kết thúc
-              </label>
-            </div>
+          {/* Phòng / Giường */}
+          <div>
+            <label className="block text-sm font-medium mb-1">Phòng</label>
+            <input
+              value={room}
+              onChange={(e) => setRoom(e.target.value)}
+              placeholder="VD: 305"
+              className="w-full rounded border px-3 py-2"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">Giường</label>
+            <input
+              value={bed}
+              onChange={(e) => setBed(e.target.value)}
+              placeholder="VD: 12B"
+              className="w-full rounded border px-3 py-2"
+            />
+          </div>
 
-            <div className="d-flex align-items-center gap-3 mt-2 mt-md-0">
-              {minutes > 0 && (
-                <small className="text-muted">
-                  Kết thúc dự kiến: <strong>{previewEndTime}</strong> ({minutes} phút)
-                </small>
+          {/* Thể tích */}
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium mb-1">Thể tích (ml)</label>
+            <input
+              value={volume}
+              onChange={(e) => setVolume(e.target.value)}
+              placeholder="VD: 500"
+              inputMode="numeric"
+              className="w-full rounded border px-3 py-2"
+            />
+          </div>
+
+          {/* >>> THAY ĐỔI THỨ TỰ: Số giọt/ml đặt TRƯỚC Tốc độ truyền <<< */}
+          <div>
+            <label className="block text-sm font-medium mb-1">Số giọt/ml</label>
+            <input
+              value={dropsPerMl}
+              onChange={(e) => setDropsPerMl(e.target.value)}
+              placeholder="VD: 20"
+              inputMode="numeric"
+              className="w-full rounded border px-3 py-2"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">Tốc độ truyền (giọt/phút)</label>
+            <input
+              value={dripRate}
+              onChange={(e) => setDripRate(e.target.value)}
+              placeholder="VD: 25"
+              inputMode="numeric"
+              className="w-full rounded border px-3 py-2"
+            />
+          </div>
+
+          {/* Ghi chú */}
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium mb-1">Ghi chú</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="..."
+              rows={4}
+              className="w-full rounded border px-3 py-2"
+            />
+          </div>
+
+          {/* Cài đặt & nút */}
+          <div className="md:col-span-2 flex items-center justify-between">
+            <div className="text-sm text-gray-600">
+              {endTimePreview ? (
+                <>
+                  Kết thúc dự kiến:{' '}
+                  <strong>
+                    {endTimePreview.toLocaleTimeString()} {endTimePreview.toLocaleDateString()}
+                  </strong>
+                </>
+              ) : (
+                '—'
               )}
-              <button className="btn btn-primary px-4" onClick={handleStart}>
-                Bắt đầu truyền
-              </button>
             </div>
-          </div>
-        </div>
-      </div>
 
-      {/* DANH SÁCH CA TRUYỀN ĐANG CHẠY – giữ nguyên id/khung để code hiện tại tiếp tục fill */}
-      <div className="card shadow-sm mb-3">
-        <div className="card-body">
-          <h5 className="card-title mb-3">Danh sách ca truyền (đang chạy)</h5>
-          <div id="running-list">
-            {/* Phần render danh sách đang chạy của bạn sẽ gắn vào đây */}
-            <div className="text-muted">Không có ca đang chạy.</div>
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={notifyEmail}
+                onChange={(e) => setNotifyEmail(e.target.checked)}
+              />
+              <span>Nhận email khi ca kết thúc</span>
+            </label>
           </div>
-        </div>
-      </div>
 
-      {/* LỊCH SỬ CA TRUYỀN – giữ nguyên cấu trúc để code cũ fill */}
-      <div className="card shadow-sm mb-5">
-        <div className="card-body">
-          <div className="d-flex align-items-center justify-content-between mb-2">
-            <h5 className="card-title mb-0">Lịch sử ca truyền</h5>
-            <button id="clear-history" className="btn btn-outline-danger btn-sm">
-              Xoá toàn bộ lịch sử
+          <div className="md:col-span-2">
+            <button
+              onClick={startInfusion}
+              className="w-full md:w-auto px-5 py-2 rounded bg-blue-600 text-white hover:bg-blue-700"
+            >
+              Bắt đầu truyền
             </button>
           </div>
-          <div id="history-list">
-            {/* Phần render lịch sử của bạn sẽ gắn vào đây */}
-            <div className="text-muted">Chưa có lịch sử.</div>
-          </div>
-          <div className="form-text mt-2">Chỉ xoá lịch sử khi không còn cần đối chiếu.</div>
         </div>
-      </div>
+      </section>
 
-      <div className="text-center text-muted pb-4">
-        <small>Phát triển: <strong>Điều dưỡng An Phước</strong></small>
-      </div>
-    </div>
+      {/* Danh sách ca đang chạy */}
+      <section className="rounded-lg border p-4 mb-6">
+        <h3 className="font-semibold mb-3">Danh sách ca truyền (đang chạy)</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left border-b">
+                <th className="py-2 pr-3">Bệnh nhân</th>
+                <th className="py-2 pr-3">Phòng - Giường</th>
+                <th className="py-2 pr-3">Kết thúc</th>
+                <th className="py-2">Đếm ngược</th>
+              </tr>
+            </thead>
+            <tbody>
+              {running.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-3 text-gray-500">
+                    Không có ca đang chạy.
+                  </td>
+                </tr>
+              )}
+              {running.map((r) => (
+                <tr key={r.id} className="border-b last:border-0">
+                  <td className="py-2 pr-3">{r.patient_name}</td>
+                  <td className="py-2 pr-3">
+                    {r.room} - {r.bed}
+                  </td>
+                  <td className="py-2 pr-3">
+                    {new Date(r.end_time).toLocaleTimeString()}{' '}
+                    {new Date(r.end_time).toLocaleDateString()}
+                  </td>
+                  <td className="py-2 font-mono">{renderCountdown(r.end_time)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Lịch sử */}
+      <section className="rounded-lg border p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold">Lịch sử ca truyền</h3>
+          <button
+            onClick={async () => {
+              if (!user) return;
+              if (!confirm('Xóa toàn bộ lịch sử?')) return;
+              await supabase
+                .from('infusions')
+                .delete()
+                .eq('user_id', user.id)
+                .lt('end_time', new Date().toISOString());
+              await fetchLists();
+            }}
+            className="px-3 py-1 rounded border border-red-300 text-red-600 hover:bg-red-50 text-sm"
+          >
+            Xóa toàn bộ lịch sử
+          </button>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left border-b">
+                <th className="py-2 pr-3">Bệnh nhân</th>
+                <th className="py-2 pr-3">Phòng - Giường</th>
+                <th className="py-2 pr-3">Kết thúc</th>
+                <th className="py-2">Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-3 text-gray-500">
+                    Chưa có lịch sử.
+                  </td>
+                </tr>
+              )}
+              {history.map((h) => (
+                <tr key={h.id} className="border-b last:border-0">
+                  <td className="py-2 pr-3">{h.patient_name}</td>
+                  <td className="py-2 pr-3">
+                    {h.room} - {h.bed}
+                  </td>
+                  <td className="py-2 pr-3">
+                    {new Date(h.end_time).toLocaleTimeString()}{' '}
+                    {new Date(h.end_time).toLocaleDateString()}
+                  </td>
+                  <td className="py-2 text-emerald-600">đã kết thúc</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <p className="text-center text-xs text-gray-500 mt-8">Phát triển: Điều dưỡng An Phước</p>
+
+      {/* âm thanh */}
+      <audio ref={beepRef} preload="auto" src="/alarm.mp3" />
+    </main>
   );
 }
