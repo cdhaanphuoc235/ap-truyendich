@@ -23,7 +23,7 @@ type Infusion = {
   notes: string | null;
   start_time: string;             // ISO
   end_time: string;               // ISO
-  status: string | null;          // có thể là 'scheduled' | 'running' | 'completed' tùy DB bạn
+  status: string | null;
   notify_email: boolean | null;
   email_sent_at?: string | null;
   push_sent_at?: string | null;
@@ -104,14 +104,13 @@ export default function Page() {
   const [volume, setVolume] = useState<number | ''>('');
   const [dropsPerMl, setDropsPerMl] = useState<number | ''>(20);
   const [dripRate, setDripRate] = useState<number | ''>(''); // giọt/phút
-  const [notes, setNotes] = useState('');
   const [wantEmail, setWantEmail] = useState(false);
 
   // ===== Data =====
   const [rows, setRows] = useState<Infusion[]>([]);
   const now = useNow(1000);
 
-  // Tách "đang chạy" và "lịch sử" trên UI theo thời gian hiện tại
+  // Tách "đang chạy" và "lịch sử" theo thời gian thực
   const running = useMemo(
     () => rows.filter(r => new Date(r.end_time).getTime() - now > 0),
     [rows, now]
@@ -167,10 +166,10 @@ export default function Page() {
       volume_ml: Number(volume),
       drops_per_ml: Number(dropsPerMl),
       drip_rate_dpm: Number(dripRate),
-      notes: notes.trim() || null,
+      notes: null, // ẩn trường ghi chú -> để null
       start_time: new Date().toISOString(),
       end_time: expectedEnd,
-      status: 'scheduled',       // GIỮ NGUYÊN theo hệ thống hiện tại
+      status: 'scheduled',
       notify_email: !!wantEmail,
     };
 
@@ -181,7 +180,7 @@ export default function Page() {
       return;
     }
     setPatient(''); setRoom(''); setBed('');
-    setVolume(''); setDripRate(''); setNotes(''); setWantEmail(false);
+    setVolume(''); setDripRate(''); setWantEmail(false);
   };
 
   // Auth
@@ -221,7 +220,7 @@ export default function Page() {
     });
   }, [now, running, soundOn]);
 
-  // ====== Khi hết giờ: Thông báo + Email (không update status để tránh CHECK constraint) ======
+  // ====== Khi hết giờ: Thông báo + Email (không update status để tránh lỗi constraint) ======
   const processedRef = useRef<Set<string>>(new Set());
 
   const showNotification = async (title: string, body: string) => {
@@ -273,21 +272,18 @@ export default function Page() {
     if (processedRef.current.has(inf.id)) return;
     processedRef.current.add(inf.id);
 
-    // 1) Hiển thị thông báo (nếu có quyền)
     if (Notification.permission === 'granted') {
       const pushOk = await showNotification(
         'Ca truyền đã kết thúc',
         `BN: ${inf.patient_name || '—'} | Phòng ${inf.room || '—'} - Giường ${inf.bed || '—'}`
       );
       if (pushOk) {
-        // chỉ cập nhật cột push_sent_at (không đụng vào status)
         await supabase.from('infusions')
           .update({ push_sent_at: new Date().toISOString() })
           .eq('id', inf.id);
       }
     }
 
-    // 2) Gửi email (nếu người dùng chọn)
     const emailOk = await sendCompletionEmailIfNeeded(inf, user?.email ?? null);
     if (emailOk) {
       await supabase.from('infusions')
@@ -309,6 +305,7 @@ export default function Page() {
 
   // ======= UI =======
   if (!user) {
+    // Màn đăng nhập giữ nguyên
     return (
       <div className="login-wrap">
         <div className="login-card">
@@ -360,28 +357,74 @@ export default function Page() {
       {/* ===== 2) NHẬP CA ===== */}
       <section className="card">
         <div className="card-head"><h2>Tạo ca truyền</h2></div>
+
         <div className="formcol">
-          <label>Bệnh nhân</label>
-          <input placeholder="VD: Phạm Văn A" value={patient} onChange={(e) => setPatient(e.target.value)} />
-          <label>Phòng</label>
-          <input placeholder="VD: 305" value={room} onChange={(e) => setRoom(e.target.value)} />
-          <label>Giường</label>
-          <input placeholder="VD: 12B" value={bed} onChange={(e) => setBed(e.target.value)} />
-          <label>Thể tích (ml)</label>
-          <input type="number" placeholder="VD: 500" value={String(volume)} onChange={(e) => setVolume(e.target.value ? Number(e.target.value) : '')} />
-          <label>Số giọt/ml</label>
-          <input type="number" placeholder="VD: 20" value={String(dropsPerMl)} onChange={(e) => setDropsPerMl(e.target.value ? Number(e.target.value) : '')} />
-          <label>Tốc độ truyền (giọt/phút)</label>
-          <input type="number" placeholder="VD: 25" value={String(dripRate)} onChange={(e) => setDripRate(e.target.value ? Number(e.target.value) : '')} />
-          <label>Ghi chú</label>
-          <textarea placeholder="…" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <label className="flabel">Bệnh nhân</label>
+          <input
+            className="finput"
+            placeholder="VD: Phạm Văn A"
+            value={patient}
+            onChange={(e) => setPatient(e.target.value)}
+          />
+
+          <label className="flabel">Phòng</label>
+          <input
+            className="finput"
+            placeholder="VD: 305"
+            value={room}
+            onChange={(e) => setRoom(e.target.value)}
+          />
+
+          <label className="flabel">Giường</label>
+          <input
+            className="finput"
+            placeholder="VD: 12B"
+            value={bed}
+            onChange={(e) => setBed(e.target.value)}
+          />
+
+          <label className="flabel">Thể tích (ml)</label>
+          <input
+            type="number"
+            className="finput"
+            placeholder="VD: 500"
+            value={String(volume)}
+            onChange={(e) => setVolume(e.target.value ? Number(e.target.value) : '')}
+          />
+
+          {/* "Số giọt/ml" đặt trên "Tốc độ truyền" */}
+          <label className="flabel">Số giọt/ml</label>
+          <input
+            type="number"
+            className="finput"
+            placeholder="VD: 20"
+            value={String(dropsPerMl)}
+            onChange={(e) => setDropsPerMl(e.target.value ? Number(e.target.value) : '')}
+          />
+
+          <label className="flabel">Tốc độ truyền (giọt/phút)</label>
+          <input
+            type="number"
+            className="finput"
+            placeholder="VD: 25"
+            value={String(dripRate)}
+            onChange={(e) => setDripRate(e.target.value ? Number(e.target.value) : '')}
+          />
+
+          {/* ẨN GHI CHÚ: bỏ label + textarea */}
+
           <div className="row">
             <label className="ck">
               <input type="checkbox" checked={wantEmail} onChange={(e) => setWantEmail(e.target.checked)} />
               Nhận email khi ca kết thúc
             </label>
-            <button className="btn" onClick={onCreate}>Bắt đầu truyền</button>
+
+            {/* Nút to & nổi bật */}
+            <button className="btn-primary" onClick={onCreate}>
+              Bắt đầu truyền
+            </button>
           </div>
+
           <div className="endhint">
             {expectedEnd
               ? <>Kết thúc dự kiến: <strong>{formatDateTime(expectedEnd)}</strong></>
@@ -429,7 +472,6 @@ export default function Page() {
             className="btn-light"
             onClick={async () => {
               if (!confirm('Xoá toàn bộ lịch sử?')) return;
-              // Xoá các ca đã qua giờ (end_time <= now) — không phụ thuộc cột status
               const nowISO = new Date().toISOString();
               await supabase.from('infusions').delete().lte('end_time', nowISO);
             }}
@@ -452,4 +494,98 @@ export default function Page() {
         )}
       </section>
 
-      <footer className="foot">Phát triển: Điều dư
+      <footer className="foot">Phát triển: Điều dưỡng An Phước</footer>
+
+      {/* ===== CSS ===== */}
+      <style jsx>{`
+        :root{
+          --blue-700:#1d4ed8; --blue-500:#2563eb; --blue-200:#bfdbfe; --blue-100:#dbeafe; --blue-50:#eff6ff;
+          --green:#22c55e; --yellow:#f59e0b; --red:#ef4444;
+          --card:#ffffff; --line:#e5e7eb; --muted:#6b7280; --text:#0f172a;
+        }
+        /* Nền xanh dương cho màn hình chính */
+        .page{
+          max-width: 980px;
+          margin: 0 auto;
+          padding: 16px 14px 28px;
+          min-height: 100dvh;
+          color: var(--text);
+          background: radial-gradient(1200px 600px at 10% -10%, var(--blue-100), transparent 40%),
+                      radial-gradient(900px 500px at 100% 0%, var(--blue-50), transparent 55%),
+                      linear-gradient(180deg, var(--blue-50), #ffffff);
+        }
+
+        .header{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;margin-bottom:12px}
+        .title strong{font-size:24px;letter-spacing:.2px}
+        .sub{font-size:14px;color:#1f2937;opacity:.9;margin-top:2px}
+        .actions{display:flex;align-items:center;gap:10px;justify-self:end;flex-wrap:wrap}
+        .sound{display:inline-flex;gap:8px;align-items:center;font-size:13px;color:#374151;background:#eef2ff;padding:6px 10px;border-radius:10px;border:1px solid #dbeafe}
+        .btn-outline{background:#fff;border:1px solid var(--line);padding:8px 12px;border-radius:10px;font-weight:700;color:var(--blue-700)}
+        .btn-danger{background:#fff;border:1px solid var(--line);padding:8px 12px;border-radius:10px;font-weight:700;color:var(--red)}
+
+        .card{
+          background: var(--card);
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          padding: 16px;
+          margin-top: 12px;
+          box-shadow: 0 10px 30px rgba(30,58,138,.08);
+        }
+        .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+        h2{font-size:20px;margin:2px 2px 6px;display:inline-flex;align-items:center;gap:8px}
+        .badge-soft{display:inline-block;font-size:12px;padding:6px 10px;border-radius:999px;background:#eff6ff;color:var(--blue-700);border:1px solid #dbeafe}
+
+        .formcol{display:grid;grid-template-columns:1fr;gap:10px}
+        /* Label to và dễ đọc hơn */
+        .flabel{font-size:16px;color:#0f172a;font-weight:700}
+        .finput{
+          width:100%;
+          background:#ffffff;
+          border: 2px solid #e5e7eb;
+          padding: 14px 14px;
+          border-radius: 12px;
+          font-size:17px;
+          transition: border-color .15s, box-shadow .15s;
+        }
+        .finput:focus{outline:none;border-color:var(--blue-500);box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+
+        .row{display:flex;align-items:center;gap:12px;margin-top:8px;flex-wrap:wrap}
+        .ck{display:inline-flex;gap:8px;align-items:center;font-size:15px}
+
+        /* Nút bắt đầu truyền: lớn & nổi bật */
+        .btn-primary{
+          background: linear-gradient(90deg, var(--blue-700), var(--green));
+          color:#fff;
+          border:0;
+          padding:16px 20px;
+          border-radius:14px;
+          font-weight:900;
+          font-size:18px;
+          letter-spacing:.3px;
+          box-shadow: 0 12px 30px rgba(37,99,235,.25);
+          width:100%;
+        }
+        @media (min-width:720px){
+          .btn-primary{width:auto;min-width:220px;margin-left:auto}
+        }
+
+        .endhint{margin-top:4px;font-size:13px;color:var(--muted)}
+        .list{display:grid;gap:8px}
+        .rowitem{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:12px;background:#fff}
+        .cell .label{font-size:12px;color:var(--muted)}
+        .cell .value{font-size:16px;font-weight:700}
+        .count{grid-column:1 / -1;display:flex;justify-content:flex-start}
+        .badge-count{display:inline-block;color:#fff;font-weight:900;letter-spacing:.5px;padding:10px 14px;border-radius:999px;min-width:120px;text-align:center;font-variant-numeric:tabular-nums;box-shadow:0 10px 18px rgba(0,0,0,.08)}
+        .empty{padding:6px 8px;color:var(--muted);font-size:14px}
+        .btn-light{background:#f3f4f6;border:1px solid var(--line);padding:8px 12px;border-radius:10px;font-weight:700;color:#111827}
+        .foot{text-align:center;color:var(--muted);font-size:12px;margin-top:16px}
+
+        /* Desktop layout cho list */
+        @media(min-width:720px){
+          .rowitem{grid-template-columns:1.2fr .9fr 1fr .9fr auto}
+          .count{grid-column:auto;justify-content:flex-end}
+        }
+      `}</style>
+    </div>
+  );
+}
