@@ -4,8 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import { createClient, User } from '@supabase/supabase-js';
 
-// ==== Supabase client (client-side) ====
-// (GIỮ NGUYÊN biến môi trường và kết nối Supabase hiện tại)
+// ==== Supabase client (GIỮ NGUYÊN cấu hình env của bạn) ====
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string
@@ -22,10 +21,10 @@ type Infusion = {
   drip_rate_dpm: number | null;   // tốc độ truyền (giọt/phút)
   drops_per_ml: number | null;    // số giọt/ml
   notes: string | null;
-  start_time: string;             // ISO string
-  end_time: string;               // ISO string
+  start_time: string;             // ISO
+  end_time: string;               // ISO
   status: 'scheduled' | 'running' | 'completed' | null;
-  notify_email: boolean | null;   // cờ nhận email
+  notify_email: boolean | null;
   email_sent_at?: string | null;
   push_sent_at?: string | null;
 };
@@ -41,16 +40,16 @@ function formatDateTime(iso: string) {
   return `${hh}:${mm}:${ss} ${dd}/${mo}/${yr}`;
 }
 
+// ⛔️ SỬA: luôn hiển thị >= 00:00:00 (không âm)
 function secToHMS(total: number) {
-  const sign = total < 0 ? '-' : '';
-  const s = Math.abs(total);
+  const s = Math.max(0, Math.floor(total));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
   const hh = String(h).padStart(2, '0');
   const mm = String(m).padStart(2, '0');
   const ss = String(sec).padStart(2, '0');
-  return `${sign}${hh}:${mm}:${ss}`;
+  return `${hh}:${mm}:${ss}`;
 }
 
 function useNow(tickMs = 1000) {
@@ -127,7 +126,7 @@ export default function Page() {
           data.filter(
             (x) =>
               (x.status === 'running' || x.status === 'scheduled') &&
-              new Date(x.end_time).getTime() - now >= -24 * 3600 * 1000 // show gần khung 1 ngày
+              new Date(x.end_time).getTime() - now >= -24 * 3600 * 1000
           )
         );
         setHistory(data.filter((x) => x.status === 'completed'));
@@ -148,7 +147,7 @@ export default function Page() {
     };
   }, [user]);
 
-  // Tính end_time từ inputs (nếu có đủ)
+  // Tính end_time dự kiến từ inputs
   const expectedEnd = useMemo(() => {
     if (!volume || !dripRate || !dropsPerMl) return null;
     const totalMin = (Number(volume) * Number(dropsPerMl)) / Number(dripRate);
@@ -212,10 +211,10 @@ export default function Page() {
     const left = Math.floor((new Date(endISO).getTime() - now) / 1000);
     if (left <= 0) return '#ef4444'; // đỏ
     if (left <= 5 * 60) return '#f59e0b'; // vàng
-    return '#22c55e'; // xanh lá
+    return '#22c55e'; // xanh
   };
 
-  // Beep khi ≤ 5 phút và khi hết giờ
+  // Beep khi ≤ 5 phút và khi hết giờ (chỉ 1 lần ở mỗi ngưỡng)
   const prevRef = useRef<Record<string, number>>({});
   useEffect(() => {
     if (!soundOn) return;
@@ -235,7 +234,7 @@ export default function Page() {
     });
   }, [now, running, soundOn]);
 
-  // ====== Tự động chuyển ca hết giờ xuống lịch sử + Thông báo + Email ======
+  // ====== Chuyển ca hết giờ xuống lịch sử + Thông báo + Email ======
   const processedRef = useRef<Set<string>>(new Set());
 
   const showNotification = async (title: string, body: string) => {
@@ -243,7 +242,6 @@ export default function Page() {
       if (!('Notification' in window)) return false;
       if (Notification.permission !== 'granted') return false;
 
-      // Ưu tiên Service Worker nếu có (PWA)
       const reg = await (navigator as any).serviceWorker?.getRegistration?.();
       if (reg && reg.showNotification) {
         await reg.showNotification(title, {
@@ -265,14 +263,14 @@ export default function Page() {
   const sendCompletionEmailIfNeeded = async (inf: Infusion, recipient?: string | null) => {
     if (!inf.notify_email) return false;
     try {
-      // GIỮ NGUYÊN luồng Resend: gọi API route phía bạn (điều chỉnh path nếu khác)
+      // GIỮ NGUYÊN luồng Resend qua API route của bạn
       const res = await fetch('/api/notify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: 'INFUSION_COMPLETED',
           infusionId: inf.id,
-          to: recipient || null, // thường là user.email
+          to: recipient || null,
           data: {
             patient: inf.patient_name,
             room: inf.room,
@@ -292,46 +290,47 @@ export default function Page() {
     if (processedRef.current.has(inf.id)) return;
     processedRef.current.add(inf.id);
 
-    // 1) Cập nhật trạng thái -> completed
-    const patch: Partial<Infusion> = {
-      status: 'completed',
-      // push_sent_at / email_sent_at sẽ set sau khi thành công
-    };
+    // 🟢 Optimistic: chuyển ngay sang lịch sử (UI không còn chạy về số âm)
+    setRunning((prev) => prev.filter((x) => x.id !== inf.id));
+    setHistory((prev) => [{ ...inf, status: 'completed' }, ...prev]);
+
+    // 1) Update trạng thái trên DB
+    const patch: Partial<Infusion> = { status: 'completed' };
     const { error: upErr } = await supabase.from('infusions').update(patch).eq('id', inf.id);
     if (upErr) {
       console.error('Update status failed', upErr);
-      // cho phép retry sau 3s
-      setTimeout(() => processedRef.current.delete(inf.id), 3000);
+      // rollback UI nếu lỗi
+      setHistory((prev) => prev.filter((x) => x.id !== inf.id));
+      setRunning((prev) => [{ ...inf }, ...prev]);
+      processedRef.current.delete(inf.id);
       return;
     }
 
-    // 2) Thông báo (web notification)
+    // 2) Thông báo
     let pushOk = false;
-    if (notifPermission === 'granted') {
+    if (Notification.permission === 'granted') {
       pushOk = await showNotification(
         'Ca truyền đã kết thúc',
         `BN: ${inf.patient_name || '—'} | Phòng ${inf.room || '—'} - Giường ${inf.bed || '—'}`
       );
     }
-
     if (pushOk) {
       await supabase.from('infusions').update({ push_sent_at: new Date().toISOString() }).eq('id', inf.id);
     }
 
-    // 3) Email (nếu có chọn)
+    // 3) Email (tôn trọng notify_email)
     const emailOk = await sendCompletionEmailIfNeeded(inf, user?.email ?? null);
     if (emailOk) {
       await supabase.from('infusions').update({ email_sent_at: new Date().toISOString() }).eq('id', inf.id);
     }
   };
 
-  // Quét danh sách ca đang chạy, ca nào hết giờ -> complete
+  // Quét ca đang chạy, ca nào hết giờ -> complete
   useEffect(() => {
     if (!running.length) return;
     running.forEach((r) => {
       const left = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
       if (left <= 0 && r.status !== 'completed') {
-        // auto chuyển xuống lịch sử + notify + email
         completeInfusionOnce(r);
       }
     });
@@ -401,7 +400,7 @@ export default function Page() {
     <div className="page">
       <audio ref={beepRef} preload="auto" src="/beep.mp3" />
 
-      {/* ====== KHU VỰC 1: TIÊU ĐỀ / ĐĂNG NHẬP ====== */}
+      {/* ====== 1) TIÊU ĐỀ / ĐĂNG NHẬP ====== */}
       <header className="header">
         <div className="title">
           <strong>AP - Truyền dịch</strong>
@@ -425,7 +424,7 @@ export default function Page() {
         </div>
       </header>
 
-      {/* ====== KHU VỰC 2: NHẬP CA ====== */}
+      {/* ====== 2) NHẬP CA ====== */}
       <section className="card">
         <div className="card-head">
           <h2>Tạo ca truyền</h2>
@@ -519,7 +518,7 @@ export default function Page() {
         </div>
       </section>
 
-      {/* ====== KHU VỰC 3: DANH SÁCH CA ĐANG CHẠY ====== */}
+      {/* ====== 3) CA ĐANG CHẠY ====== */}
       <section className="card">
         <div className="card-head">
           <h2>Ca đang chạy</h2>
@@ -531,9 +530,10 @@ export default function Page() {
         ) : (
           <div className="list">
             {running.map((r) => {
-              const leftSec = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
+              const rawLeft = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
+              const leftSec = Math.max(0, rawLeft); // ⛔️ SỬA: clamp 0s
               const col = colorFor(r.end_time);
-              const status = leftSec <= 0 ? 'đã kết thúc' : (r.status ?? 'đang truyền');
+              const status = rawLeft <= 0 ? 'đã kết thúc' : (r.status ?? 'đang truyền');
 
               return (
                 <div className="rowitem" key={r.id}>
@@ -565,7 +565,7 @@ export default function Page() {
         )}
       </section>
 
-      {/* ====== KHU VỰC 4: LỊCH SỬ ====== */}
+      {/* ====== 4) LỊCH SỬ ====== */}
       <section className="card">
         <div className="card-head">
           <h2>Lịch sử ca truyền</h2>
