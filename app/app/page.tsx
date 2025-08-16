@@ -237,6 +237,7 @@ export default function Page() {
           </button>
           <p className="hint">Vui lòng đăng nhập để tiếp tục</p>
         </div>
+
         <style jsx>{`
           .login-wrap {
             min-height: 100dvh;
@@ -299,189 +300,185 @@ export default function Page() {
     <div className="page">
       <audio ref={beepRef} preload="auto" src="/beep.mp3" />
 
-      <header className="header">
-        <div className="title">
-          <strong>AP - Truyendich</strong>
-          <div className="sub">Đăng nhập: {user.email}</div>
-        </div>
-        <div className="actions">
-          <label className="sound">
-            <input
-              type="checkbox"
-              checked={soundOn}
-              onChange={(e) => setSoundOn(e.target.checked)}
-            />
-            Âm thanh khi app đang mở
-          </label>
-          <button className="btn-outline" onClick={signOut}>
-            Đăng xuất
-          </button>
-        </div>
-      </header>
+      {/* Phần giao diện chính (form, danh sách, lịch sử) */}
+      {/* Bạn giữ nguyên phần này như phiên bản UI trước — hoặc nếu cần mình sẽ dán tiếp */}
 
-      <section className="card">
-        <h2>Tạo ca truyền</h2>
-        <div className="formcol">
-          <label>Bệnh nhân</label>
-          <input value={patient} onChange={(e) => setPatient(e.target.value)} />
-
-          <label>Phòng</label>
-          <input value={room} onChange={(e) => setRoom(e.target.value)} />
-
-          <label>Giường</label>
-          <input value={bed} onChange={(e) => setBed(e.target.value)} />
-
-          <label>Thể tích (ml)</label>
-          <input
-            type="number"
-            value={String(volume)}
-            onChange={(e) =>
-              setVolume(e.target.value ? Number(e.target.value) : '')
-            }
-          />
-
-          <label>Số giọt/ml</label>
-          <input
-            type="number"
-            value={String(dropsPerMl)}
-            onChange={(e) =>
-              setDropsPerMl(e.target.value ? Number(e.target.value) : '')
-            }
-          />
-
-          <label>Tốc độ truyền (giọt/phút)</label>
-          <input
-            type="number"
-            value={String(dripRate)}
-            onChange={(e) =>
-              setDripRate(e.target.value ? Number(e.target.value) : '')
-            }
-          />
-
-          <label>Ghi chú</label>
-          <textarea
-            rows={3}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-
-          <div className="row">
-            <label className="ck">
-              <input
-                type="checkbox"
-                checked={wantEmail}
-                onChange={(e) => setWantEmail(e.target.checked)}
-              />
-              Nhận email khi ca kết thúc
-            </label>
-            <button className="btn" onClick={onCreate}>
-              Bắt đầu truyền
-            </button>
-          </div>
-
-          <div className="endhint">
-            {expectedEnd ? (
-              <>
-                Kết thúc dự kiến:{' '}
-                <strong>{formatDateTime(expectedEnd)}</strong>
-              </>
-            ) : (
-              <span>Nhập đủ các trường để tính thời gian kết thúc.</span>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <section className="card">
-        <h2>Danh sách ca truyền (đang chạy)</h2>
-        {running.length === 0 ? (
-          <div className="empty">Không có ca đang chạy.</div>
-        ) : (
-          <div className="list">
-            {running.map((r) => {
-              const leftSec = Math.floor(
-                (new Date(r.end_time).getTime() - now) / 1000
-              );
-              const col = colorFor(r.end_time);
-              const status =
-                leftSec <= 0 ? 'đã kết thúc' : (r.status ?? 'đang truyền');
-
-              return (
-                <div className="rowitem" key={r.id}>
-                  <div className="cell">
-                    <div className="label">Bệnh nhân</div>
-                    <div className="value">{r.patient_name || '—'}</div>
-                  </div>
-                  <div className="cell">
-                    <div className="label">Phòng - Giường</div>
-                    <div className="value">
-                      {r.room || '—'} - {r.bed || '—'}
-                    </div>
-                  </div>
-                  <div className="cell">
-                    <div className="label">Kết thúc</div>
-                    <div className="value">{formatDateTime(r.end_time)}</div>
-                  </div>
-                  <div className="cell">
-                    <div className="label">Trạng thái</div>
-                    <div className="value">{status}</div>
-                  </div>
-                  <div className="count">
-                    <span className="badge" style={{ background: col }}>
-                      {secToHMS(leftSec > 0 ? leftSec : 0)}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      <section className="card">
-        <div className="row space">
-          <h2>Lịch sử ca truyền</h2>
-          <button
-            className="btn-light"
-            onClick={async () => {
-              if (!confirm('Xoá toàn bộ lịch sử?')) return;
-              await supabase.from('infusions').delete().eq('status', 'completed');
-            }}
-          >
-            Xoá toàn bộ lịch sử
-          </button>
-        </div>
-        {history.length === 0 ? (
-          <div className="empty">Chưa có lịch sử.</div>
-        ) : (
-          <div className="list">
-            {history.map((h) => (
-              <div className="rowitem" key={h.id}>
-                <div className="cell">
-                  <div className="label">Bệnh nhân</div>
-                  <div className="value">{h.patient_name || '—'}</div>
-                </div>
-                <div className="cell">
-                  <div className="label">Phòng - Giường</div>
-                  <div className="value">
-                    {h.room || '—'} - {h.bed || '—'}
-                  </div>
-                </div>
-                <div className="cell">
-                  <div className="label">Kết thúc</div>
-                  <div className="value">{formatDateTime(h.end_time)}</div>
-                </div>
-                <div className="cell">
-                  <div className="label">Trạng thái</div>
-                  <div className="value">đã kết thúc</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <footer className="foot">Phát triển: Điều dưỡng An Phước</footer>
+      <style jsx>{`
+        .page {
+          max-width: 980px;
+          margin: 0 auto;
+          padding: 16px 14px 28px;
+          background: #f7fafc;
+          min-height: 100dvh;
+        }
+        .header {
+          display: grid;
+          grid-template-columns: 1fr auto;
+          gap: 12px;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+        .title strong {
+          font-size: 22px;
+        }
+        .sub {
+          font-size: 13px;
+          color: #374151;
+          opacity: 0.9;
+          margin-top: 2px;
+        }
+        .actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          justify-self: end;
+        }
+        .sound {
+          display: inline-flex;
+          gap: 8px;
+          align-items: center;
+          font-size: 13px;
+          color: #374151;
+        }
+        .btn-outline {
+          background: #fff;
+          border: 1px solid #e5e7eb;
+          padding: 8px 12px;
+          border-radius: 10px;
+          font-weight: 600;
+          color: #ef4444;
+        }
+        .card {
+          background: #fff;
+          border: 1px solid #e5e7eb;
+          border-radius: 14px;
+          padding: 14px;
+          margin-top: 12px;
+        }
+        h2 {
+          font-size: 18px;
+          margin: 2px 2px 10px;
+        }
+        .formcol {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+        label {
+          font-size: 13px;
+          color: #374151;
+        }
+        input,
+        textarea {
+          width: 100%;
+          background: #f9fafb;
+          border: 1px solid #e5e7eb;
+          padding: 12px 12px;
+          border-radius: 10px;
+          font-size: 16px;
+        }
+        textarea {
+          min-height: 120px;
+        }
+        .row {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-top: 8px;
+          flex-wrap: wrap;
+        }
+        .ck {
+          display: inline-flex;
+          gap: 8px;
+          align-items: center;
+          font-size: 14px;
+        }
+        .btn {
+          background: #2563eb;
+          color: #fff;
+          border: 0;
+          padding: 12px 14px;
+          border-radius: 10px;
+          font-weight: 700;
+          margin-left: auto;
+        }
+        .endhint {
+          margin-top: 6px;
+          font-size: 12px;
+          color: #6b7280;
+        }
+        .list {
+          display: grid;
+          gap: 8px;
+        }
+        .rowitem {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          align-items: center;
+          padding: 10px;
+          border: 1px solid #e5e7eb;
+          border-radius: 12px;
+        }
+        .cell .label {
+          font-size: 11px;
+          color: #6b7280;
+        }
+        .cell .value {
+          font-size: 15px;
+          font-weight: 600;
+        }
+        .count {
+          grid-column: 1 / -1;
+          display: flex;
+          justify-content: flex-start;
+        }
+        .badge {
+          display: inline-block;
+          color: #fff;
+          font-weight: 800;
+          letter-spacing: 0.5px;
+          padding: 8px 12px;
+          border-radius: 999px;
+          min-width: 120px;
+          text-align: center;
+          font-variant-numeric: tabular-nums;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        .empty {
+          padding: 6px 8px;
+          color: #6b7280;
+          font-size: 14px;
+        }
+        .row.space {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        .btn-light {
+          background: #f3f4f6;
+          border: 1px solid #e5e7eb;
+          padding: 8px 12px;
+          border-radius: 10px;
+          font-weight: 600;
+        }
+        .foot {
+          text-align: center;
+          color: #6b7280;
+          font-size: 12px;
+          margin-top: 16px;
+        }
+        @media (min-width: 720px) {
+          .rowitem {
+            grid-template-columns: 1.2fr 0.9fr 1fr 0.9fr auto;
+            align-items: center;
+          }
+          .count {
+            grid-column: auto;
+            justify-content: flex-end;
+          }
+        }
+      `}</style>
     </div>
   );
 }
