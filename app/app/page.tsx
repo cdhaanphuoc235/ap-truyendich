@@ -4,13 +4,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import { createClient, User } from '@supabase/supabase-js';
 
-// ==== Supabase client (client-side) ====
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string
 );
 
-// Kiểu dữ liệu injection/infusion
 type Infusion = {
   id: string;
   user_id: string | null;
@@ -18,13 +16,13 @@ type Infusion = {
   room: string | null;
   bed: string | null;
   volume_ml: number | null;
-  drip_rate_dpm: number | null;   // tốc độ truyền (giọt/phút)
-  drops_per_ml: number | null;    // số giọt/ml
+  drip_rate_dpm: number | null;
+  drops_per_ml: number | null;
   notes: string | null;
-  start_time: string;             // ISO string
-  end_time: string;               // ISO string
+  start_time: string;
+  end_time: string;
   status: 'scheduled' | 'running' | 'completed' | null;
-  notify_email: boolean | null;   // <-- cờ nhận email
+  notify_email: boolean | null;
   email_sent_at?: string | null;
   push_sent_at?: string | null;
 };
@@ -62,7 +60,6 @@ function useNow(tickMs = 1000) {
 }
 
 export default function Page() {
-  // ==== Auth ====
   const [user, setUser] = useState<User | null>(null);
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
@@ -72,25 +69,21 @@ export default function Page() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // ==== UI state ====
   const [soundOn, setSoundOn] = useState(true);
   const beepRef = useRef<HTMLAudioElement | null>(null);
 
-  // ==== Form state ====
   const [patient, setPatient] = useState('');
   const [room, setRoom] = useState('');
   const [bed, setBed] = useState('');
   const [volume, setVolume] = useState<number | ''>('');
   const [dropsPerMl, setDropsPerMl] = useState<number | ''>(20);
-  const [dripRate, setDripRate] = useState<number | ''>(''); // giọt/phút
+  const [dripRate, setDripRate] = useState<number | ''>('');
   const [notes, setNotes] = useState('');
   const [wantEmail, setWantEmail] = useState(false);
 
-  // ==== Data ====
   const [running, setRunning] = useState<Infusion[]>([]);
   const [history, setHistory] = useState<Infusion[]>([]);
 
-  // Tải dữ liệu
   useEffect(() => {
     if (!user) return;
     const load = async () => {
@@ -105,7 +98,7 @@ export default function Page() {
           data.filter(
             (x) =>
               (x.status === 'running' || x.status === 'scheduled') &&
-              new Date(x.end_time).getTime() - now >= -24 * 3600 * 1000 // show near-future/past
+              new Date(x.end_time).getTime() - now >= -24 * 3600 * 1000
           )
         );
         setHistory(data.filter((x) => x.status === 'completed'));
@@ -113,7 +106,6 @@ export default function Page() {
     };
     load();
 
-    // Realtime theo bảng (tùy project đã bật Realtime hay chưa)
     const ch = supabase
       .channel('infusions-stream')
       .on(
@@ -128,16 +120,13 @@ export default function Page() {
     };
   }, [user]);
 
-  // Tính end_time từ inputs (nếu có đủ thông tin)
   const expectedEnd = useMemo(() => {
     if (!volume || !dripRate || !dropsPerMl) return null;
-    // tổng giọt = volume * drops/ml; thời gian(phút) = tổng giọt / giọt mỗi phút
     const totalMin = (Number(volume) * Number(dropsPerMl)) / Number(dripRate);
     const end = new Date(Date.now() + totalMin * 60 * 1000);
     return end.toISOString();
   }, [volume, dripRate, dropsPerMl]);
 
-  // Submit form
   const onCreate = async () => {
     if (!user) return alert('Vui lòng đăng nhập!');
     if (!patient || !room || !bed || !volume || !dropsPerMl || !dripRate) {
@@ -157,7 +146,7 @@ export default function Page() {
       start_time: new Date().toISOString(),
       end_time: expectedEnd,
       status: 'scheduled',
-      notify_email: !!wantEmail, // <-- cờ nhận email
+      notify_email: !!wantEmail,
     };
 
     const { error } = await supabase.from('infusions').insert(payload);
@@ -166,7 +155,7 @@ export default function Page() {
       alert('Lỗi lưu ca truyền. Vui lòng thử lại!');
       return;
     }
-    // reset nhẹ
+
     setPatient('');
     setRoom('');
     setBed('');
@@ -175,28 +164,25 @@ export default function Page() {
     setNotes('');
     setWantEmail(false);
   };
-
-  // Đăng nhập/đăng xuất
   const signIn = async () => {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: window.location.origin }
     });
   };
+
   const signOut = async () => {
     await supabase.auth.signOut();
   };
 
-  // ====== Đếm ngược + màu + âm thanh ======
   const now = useNow(1000);
   const colorFor = (endISO: string) => {
     const left = Math.floor((new Date(endISO).getTime() - now) / 1000);
-    if (left <= 0) return '#ef4444'; // đỏ
-    if (left <= 5 * 60) return '#f59e0b'; // vàng
-    return '#22c55e'; // xanh lá
+    if (left <= 0) return '#ef4444';
+    if (left <= 5 * 60) return '#f59e0b';
+    return '#22c55e';
   };
 
-  // Phát âm thanh khi còn ≤ 5 phút và khi hết giờ
   const prevRef = useRef<Record<string, number>>({});
   useEffect(() => {
     if (!soundOn) return;
@@ -205,20 +191,30 @@ export default function Page() {
         beepRef.current?.play().catch(() => {});
       } catch {}
     };
-    running.forEach((r) => {
+
+    running.forEach(async (r) => {
       const left = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
       const prev = prevRef.current[r.id] ?? Infinity;
-      // từ >300s nhảy xuống 300s -> beep
+
       if (prev > 300 && left <= 300 && left > 0) doBeep();
-      // từ >0 nhảy xuống <=0 -> beep
       if (prev > 0 && left <= 0) doBeep();
+
       prevRef.current[r.id] = left;
+
+      if (left <= 0 && r.status !== 'completed') {
+        const updates: Partial<Infusion> = {
+          status: 'completed',
+          ...(r.notify_email && !r.email_sent_at
+            ? { email_sent_at: new Date().toISOString() }
+            : {})
+        };
+
+        await supabase.from('infusions').update(updates).eq('id', r.id);
+      }
     });
   }, [now, running, soundOn]);
 
-  // ====== UI ======
   if (!user) {
-    // ===== MÀN HÌNH ĐĂNG NHẬP =====
     return (
       <div className="login-wrap">
         <div className="login-card">
@@ -241,7 +237,6 @@ export default function Page() {
           </button>
           <p className="hint">Vui lòng đăng nhập để tiếp tục</p>
         </div>
-
         <style jsx>{`
           .login-wrap {
             min-height: 100dvh;
@@ -300,12 +295,10 @@ export default function Page() {
     );
   }
 
-  // ===== MÀN HÌNH CHÍNH =====
   return (
     <div className="page">
       <audio ref={beepRef} preload="auto" src="/beep.mp3" />
 
-      {/* Header */}
       <header className="header">
         <div className="title">
           <strong>AP - Truyendich</strong>
@@ -326,36 +319,21 @@ export default function Page() {
         </div>
       </header>
 
-      {/* Form tạo ca */}
       <section className="card">
         <h2>Tạo ca truyền</h2>
-
         <div className="formcol">
           <label>Bệnh nhân</label>
-          <input
-            placeholder="VD: Phạm Văn A"
-            value={patient}
-            onChange={(e) => setPatient(e.target.value)}
-          />
+          <input value={patient} onChange={(e) => setPatient(e.target.value)} />
 
           <label>Phòng</label>
-          <input
-            placeholder="VD: 305"
-            value={room}
-            onChange={(e) => setRoom(e.target.value)}
-          />
+          <input value={room} onChange={(e) => setRoom(e.target.value)} />
 
           <label>Giường</label>
-          <input
-            placeholder="VD: 12B"
-            value={bed}
-            onChange={(e) => setBed(e.target.value)}
-          />
+          <input value={bed} onChange={(e) => setBed(e.target.value)} />
 
           <label>Thể tích (ml)</label>
           <input
             type="number"
-            placeholder="VD: 500"
             value={String(volume)}
             onChange={(e) =>
               setVolume(e.target.value ? Number(e.target.value) : '')
@@ -365,7 +343,6 @@ export default function Page() {
           <label>Số giọt/ml</label>
           <input
             type="number"
-            placeholder="VD: 20"
             value={String(dropsPerMl)}
             onChange={(e) =>
               setDropsPerMl(e.target.value ? Number(e.target.value) : '')
@@ -375,7 +352,6 @@ export default function Page() {
           <label>Tốc độ truyền (giọt/phút)</label>
           <input
             type="number"
-            placeholder="VD: 25"
             value={String(dripRate)}
             onChange={(e) =>
               setDripRate(e.target.value ? Number(e.target.value) : '')
@@ -384,8 +360,7 @@ export default function Page() {
 
           <label>Ghi chú</label>
           <textarea
-            placeholder="…"
-            rows={4}
+            rows={3}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
@@ -399,7 +374,6 @@ export default function Page() {
               />
               Nhận email khi ca kết thúc
             </label>
-
             <button className="btn" onClick={onCreate}>
               Bắt đầu truyền
             </button>
@@ -418,7 +392,6 @@ export default function Page() {
         </div>
       </section>
 
-      {/* Danh sách ca đang chạy */}
       <section className="card">
         <h2>Danh sách ca truyền (đang chạy)</h2>
         {running.length === 0 ? (
@@ -455,7 +428,7 @@ export default function Page() {
                   </div>
                   <div className="count">
                     <span className="badge" style={{ background: col }}>
-                      {secToHMS(leftSec)}
+                      {secToHMS(leftSec > 0 ? leftSec : 0)}
                     </span>
                   </div>
                 </div>
@@ -465,7 +438,6 @@ export default function Page() {
         )}
       </section>
 
-      {/* Lịch sử ca truyền */}
       <section className="card">
         <div className="row space">
           <h2>Lịch sử ca truyền</h2>
@@ -510,192 +482,6 @@ export default function Page() {
       </section>
 
       <footer className="foot">Phát triển: Điều dưỡng An Phước</footer>
-
-      {/* ========== CSS-in-JSX ========== */}
-      <style jsx>{`
-        .page {
-          max-width: 980px;
-          margin: 0 auto;
-          padding: 16px 14px 28px;
-          background: #f7fafc;
-          min-height: 100dvh;
-        }
-        .header {
-          display: grid;
-          grid-template-columns: 1fr auto;
-          gap: 12px;
-          align-items: center;
-          margin-bottom: 12px;
-        }
-        .title strong {
-          font-size: 22px;
-        }
-        .sub {
-          font-size: 13px;
-          color: #374151;
-          opacity: 0.9;
-          margin-top: 2px;
-        }
-        .actions {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          justify-self: end;
-        }
-        .sound {
-          display: inline-flex;
-          gap: 8px;
-          align-items: center;
-          font-size: 13px;
-          color: #374151;
-        }
-        .btn-outline {
-          background: #fff;
-          border: 1px solid #e5e7eb;
-          padding: 8px 12px;
-          border-radius: 10px;
-          font-weight: 600;
-          color: #ef4444;
-        }
-
-        .card {
-          background: #fff;
-          border: 1px solid #e5e7eb;
-          border-radius: 14px;
-          padding: 14px;
-          margin-top: 12px;
-        }
-        h2 {
-          font-size: 18px;
-          margin: 2px 2px 10px;
-        }
-
-        .formcol {
-          display: grid;
-          grid-template-columns: 1fr;
-          gap: 8px;
-        }
-        label {
-          font-size: 13px;
-          color: #374151;
-        }
-        input,
-        textarea {
-          width: 100%;
-          background: #f9fafb;
-          border: 1px solid #e5e7eb;
-          padding: 12px 12px;
-          border-radius: 10px;
-          font-size: 16px;
-        }
-        textarea {
-          min-height: 120px;
-        }
-        .row {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          margin-top: 8px;
-          flex-wrap: wrap;
-        }
-        .ck {
-          display: inline-flex;
-          gap: 8px;
-          align-items: center;
-          font-size: 14px;
-        }
-        .btn {
-          background: #2563eb;
-          color: #fff;
-          border: 0;
-          padding: 12px 14px;
-          border-radius: 10px;
-          font-weight: 700;
-          margin-left: auto;
-        }
-        .endhint {
-          margin-top: 6px;
-          font-size: 12px;
-          color: #6b7280;
-        }
-
-        .list {
-          display: grid;
-          gap: 8px;
-        }
-        .rowitem {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
-          align-items: center;
-          padding: 10px;
-          border: 1px solid #e5e7eb;
-          border-radius: 12px;
-        }
-        .cell .label {
-          font-size: 11px;
-          color: #6b7280;
-        }
-        .cell .value {
-          font-size: 15px;
-          font-weight: 600;
-        }
-        .count {
-          grid-column: 1 / -1;
-          display: flex;
-          justify-content: flex-start;
-        }
-        .badge {
-          display: inline-block;
-          color: #fff;
-          font-weight: 800;
-          letter-spacing: 0.5px;
-          padding: 8px 12px;
-          border-radius: 999px;
-          min-width: 120px;
-          text-align: center;
-          font-variant-numeric: tabular-nums;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-        }
-
-        .empty {
-          padding: 6px 8px;
-          color: #6b7280;
-          font-size: 14px;
-        }
-
-        .row.space {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
-        .btn-light {
-          background: #f3f4f6;
-          border: 1px solid #e5e7eb;
-          padding: 8px 12px;
-          border-radius: 10px;
-          font-weight: 600;
-        }
-
-        .foot {
-          text-align: center;
-          color: #6b7280;
-          font-size: 12px;
-          margin-top: 16px;
-        }
-
-        /* Desktop tweaks */
-        @media (min-width: 720px) {
-          .rowitem {
-            grid-template-columns: 1.2fr 0.9fr 1fr 0.9fr auto;
-            align-items: center;
-          }
-          .count {
-            grid-column: auto;
-            justify-content: flex-end;
-          }
-        }
-      `}</style>
     </div>
   );
 }
