@@ -4,11 +4,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import { createClient, User } from '@supabase/supabase-js';
 
+// ==== Supabase client (client-side) ====
+// (GIỮ NGUYÊN biến môi trường và kết nối Supabase hiện tại)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string
 );
 
+// ==== Kiểu dữ liệu ====
 type Infusion = {
   id: string;
   user_id: string | null;
@@ -16,13 +19,13 @@ type Infusion = {
   room: string | null;
   bed: string | null;
   volume_ml: number | null;
-  drip_rate_dpm: number | null;
-  drops_per_ml: number | null;
+  drip_rate_dpm: number | null;   // tốc độ truyền (giọt/phút)
+  drops_per_ml: number | null;    // số giọt/ml
   notes: string | null;
-  start_time: string;
-  end_time: string;
+  start_time: string;             // ISO string
+  end_time: string;               // ISO string
   status: 'scheduled' | 'running' | 'completed' | null;
-  notify_email: boolean | null;
+  notify_email: boolean | null;   // cờ nhận email
   email_sent_at?: string | null;
   push_sent_at?: string | null;
 };
@@ -32,8 +35,8 @@ function formatDateTime(iso: string) {
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
   const ss = String(d.getSeconds()).padStart(2, '0');
-  const dd = d.getDate();
-  const mo = d.getMonth() + 1;
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
   const yr = d.getFullYear();
   return `${hh}:${mm}:${ss} ${dd}/${mo}/${yr}`;
 }
@@ -60,6 +63,7 @@ function useNow(tickMs = 1000) {
 }
 
 export default function Page() {
+  // ===== Auth =====
   const [user, setUser] = useState<User | null>(null);
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data.user ?? null));
@@ -69,21 +73,46 @@ export default function Page() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  const [soundOn, setSoundOn] = useState(true);
+  // ===== UI state =====
+  const [soundOn, setSoundOn] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    const v = localStorage.getItem('ap_sound_on');
+    return v ? v === '1' : true;
+  });
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('ap_sound_on', soundOn ? '1' : '0');
+    }
+  }, [soundOn]);
+
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
+    typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
+  );
+  const requestNotification = async () => {
+    try {
+      if (!('Notification' in window)) return;
+      const perm = await Notification.requestPermission();
+      setNotifPermission(perm);
+    } catch {}
+  };
+
   const beepRef = useRef<HTMLAudioElement | null>(null);
 
+  // ===== Form state =====
   const [patient, setPatient] = useState('');
   const [room, setRoom] = useState('');
   const [bed, setBed] = useState('');
   const [volume, setVolume] = useState<number | ''>('');
   const [dropsPerMl, setDropsPerMl] = useState<number | ''>(20);
-  const [dripRate, setDripRate] = useState<number | ''>('');
+  const [dripRate, setDripRate] = useState<number | ''>(''); // giọt/phút
   const [notes, setNotes] = useState('');
   const [wantEmail, setWantEmail] = useState(false);
 
+  // ===== Data =====
   const [running, setRunning] = useState<Infusion[]>([]);
   const [history, setHistory] = useState<Infusion[]>([]);
 
+  // Load + realtime
   useEffect(() => {
     if (!user) return;
     const load = async () => {
@@ -98,14 +127,13 @@ export default function Page() {
           data.filter(
             (x) =>
               (x.status === 'running' || x.status === 'scheduled') &&
-              new Date(x.end_time).getTime() - now >= -24 * 3600 * 1000
+              new Date(x.end_time).getTime() - now >= -24 * 3600 * 1000 // show gần khung 1 ngày
           )
         );
         setHistory(data.filter((x) => x.status === 'completed'));
       }
     };
     load();
-
     const ch = supabase
       .channel('infusions-stream')
       .on(
@@ -120,6 +148,7 @@ export default function Page() {
     };
   }, [user]);
 
+  // Tính end_time từ inputs (nếu có đủ)
   const expectedEnd = useMemo(() => {
     if (!volume || !dripRate || !dropsPerMl) return null;
     const totalMin = (Number(volume) * Number(dropsPerMl)) / Number(dripRate);
@@ -127,6 +156,7 @@ export default function Page() {
     return end.toISOString();
   }, [volume, dripRate, dropsPerMl]);
 
+  // Create
   const onCreate = async () => {
     if (!user) return alert('Vui lòng đăng nhập!');
     if (!patient || !room || !bed || !volume || !dropsPerMl || !dripRate) {
@@ -149,14 +179,13 @@ export default function Page() {
       notify_email: !!wantEmail,
     };
 
-    const { error } = await supabase
-.from('infusions').insert(payload);
+    const { error } = await supabase.from('infusions').insert(payload);
     if (error) {
       console.error(error);
       alert('Lỗi lưu ca truyền. Vui lòng thử lại!');
       return;
     }
-
+    // reset
     setPatient('');
     setRoom('');
     setBed('');
@@ -165,68 +194,153 @@ export default function Page() {
     setNotes('');
     setWantEmail(false);
   };
+
+  // Auth
   const signIn = async () => {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: window.location.origin }
     });
   };
-
   const signOut = async () => {
     await supabase.auth.signOut();
   };
 
+  // ====== Đếm ngược + màu + âm thanh ======
   const now = useNow(1000);
   const colorFor = (endISO: string) => {
     const left = Math.floor((new Date(endISO).getTime() - now) / 1000);
-    if (left <= 0) return '#ef4444';
-    if (left <= 5 * 60) return '#f59e0b';
-    return '#22c55e';
+    if (left <= 0) return '#ef4444'; // đỏ
+    if (left <= 5 * 60) return '#f59e0b'; // vàng
+    return '#22c55e'; // xanh lá
   };
 
+  // Beep khi ≤ 5 phút và khi hết giờ
   const prevRef = useRef<Record<string, number>>({});
-useEffect(() => {
-  if (!soundOn) return;
-  const doBeep = () => {
+  useEffect(() => {
+    if (!soundOn) return;
+    const doBeep = () => {
+      try {
+        if (!beepRef.current) return;
+        beepRef.current.currentTime = 0;
+        beepRef.current.play().catch(() => {});
+      } catch {}
+    };
+    running.forEach((r) => {
+      const left = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
+      const prev = prevRef.current[r.id] ?? Infinity;
+      if (prev > 300 && left <= 300 && left > 0) doBeep();
+      if (prev > 0 && left <= 0) doBeep();
+      prevRef.current[r.id] = left;
+    });
+  }, [now, running, soundOn]);
+
+  // ====== Tự động chuyển ca hết giờ xuống lịch sử + Thông báo + Email ======
+  const processedRef = useRef<Set<string>>(new Set());
+
+  const showNotification = async (title: string, body: string) => {
     try {
-      beepRef.current?.play().catch(() => {});
-    } catch {}
+      if (!('Notification' in window)) return false;
+      if (Notification.permission !== 'granted') return false;
+
+      // Ưu tiên Service Worker nếu có (PWA)
+      const reg = await (navigator as any).serviceWorker?.getRegistration?.();
+      if (reg && reg.showNotification) {
+        await reg.showNotification(title, {
+          body,
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
+          vibrate: [80, 40, 80],
+          tag: 'ap-infusion',
+        });
+      } else {
+        new Notification(title, { body, icon: '/icon-192.png' });
+      }
+      return true;
+    } catch {
+      return false;
+    }
   };
 
-  running.forEach(async (r) => {
-    const left = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
-    const prev = prevRef.current[r.id] ?? Infinity;
-
-    if (prev > 300 && left <= 300 && left > 0) doBeep();
-    if (prev > 0 && left <= 0) doBeep();
-
-    prevRef.current[r.id] = left;
-
-    if (left <= 0 && r.status !== 'completed') {
-      const updates: Partial<Infusion> = {
-        status: 'completed'
-      };
-
-      if (r.notify_email && !r.email_sent_at) {
-        updates.email_sent_at = new Date().toISOString();
-      }
-
-      console.log('⏱ Cập nhật infusion:', r.id, updates);
-
-      const { error } = await supabase
-        .from('infusions')
-        .update(updates)
-        .eq('id', r.id)
-        .select();
-
-      if (error) {
-        console.error('❌ Lỗi cập nhật ca:', error.message);
-      }
+  const sendCompletionEmailIfNeeded = async (inf: Infusion, recipient?: string | null) => {
+    if (!inf.notify_email) return false;
+    try {
+      // GIỮ NGUYÊN luồng Resend: gọi API route phía bạn (điều chỉnh path nếu khác)
+      const res = await fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'INFUSION_COMPLETED',
+          infusionId: inf.id,
+          to: recipient || null, // thường là user.email
+          data: {
+            patient: inf.patient_name,
+            room: inf.room,
+            bed: inf.bed,
+            end_time: inf.end_time
+          }
+        })
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('Email notify failed:', e);
+      return false;
     }
-  });
-}, [now, running, soundOn]);
+  };
 
+  const completeInfusionOnce = async (inf: Infusion) => {
+    if (processedRef.current.has(inf.id)) return;
+    processedRef.current.add(inf.id);
+
+    // 1) Cập nhật trạng thái -> completed
+    const patch: Partial<Infusion> = {
+      status: 'completed',
+      // push_sent_at / email_sent_at sẽ set sau khi thành công
+    };
+    const { error: upErr } = await supabase.from('infusions').update(patch).eq('id', inf.id);
+    if (upErr) {
+      console.error('Update status failed', upErr);
+      // cho phép retry sau 3s
+      setTimeout(() => processedRef.current.delete(inf.id), 3000);
+      return;
+    }
+
+    // 2) Thông báo (web notification)
+    let pushOk = false;
+    if (notifPermission === 'granted') {
+      pushOk = await showNotification(
+        'Ca truyền đã kết thúc',
+        `BN: ${inf.patient_name || '—'} | Phòng ${inf.room || '—'} - Giường ${inf.bed || '—'}`
+      );
+    }
+
+    if (pushOk) {
+      await supabase.from('infusions').update({ push_sent_at: new Date().toISOString() }).eq('id', inf.id);
+    }
+
+    // 3) Email (nếu có chọn)
+    const emailOk = await sendCompletionEmailIfNeeded(inf, user?.email ?? null);
+    if (emailOk) {
+      await supabase.from('infusions').update({ email_sent_at: new Date().toISOString() }).eq('id', inf.id);
+    }
+  };
+
+  // Quét danh sách ca đang chạy, ca nào hết giờ -> complete
+  useEffect(() => {
+    if (!running.length) return;
+    running.forEach((r) => {
+      const left = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
+      if (left <= 0 && r.status !== 'completed') {
+        // auto chuyển xuống lịch sử + notify + email
+        completeInfusionOnce(r);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now, running]);
+
+  // ======= UI =======
   if (!user) {
+    // ===== MÀN HÌNH ĐĂNG NHẬP =====
     return (
       <div className="login-wrap">
         <div className="login-card">
@@ -241,8 +355,7 @@ useEffect(() => {
           </div>
           <h1>AP - Truyền dịch</h1>
           <p className="desc">
-            Ứng dụng tính thời gian truyền dịch cho điều dưỡng – Bệnh viện An
-            Phước
+            Ứng dụng tính thời gian truyền dịch cho điều dưỡng – Bệnh viện An Phước
           </p>
           <button className="btn-login" onClick={signIn}>
             Đăng nhập bằng Google
@@ -269,40 +382,16 @@ useEffect(() => {
             padding: 28px 20px;
             backdrop-filter: blur(6px);
           }
-          .logo {
-            display: grid;
-            place-items: center;
-            margin-bottom: 12px;
-          }
-          h1 {
-            font-size: 22px;
-            margin: 6px 0 8px;
-            font-weight: 700;
-          }
-          .desc {
-            opacity: 0.9;
-            font-size: 14px;
-            margin-bottom: 18px;
-          }
+          .logo { display: grid; place-items: center; margin-bottom: 12px; }
+          h1 { font-size: 22px; margin: 6px 0 8px; font-weight: 800; letter-spacing: .2px; }
+          .desc { opacity: .95; font-size: 14px; margin-bottom: 18px; }
           .btn-login {
-            width: 100%;
-            padding: 14px 16px;
-            border-radius: 10px;
-            border: none;
-            background: #fff;
-            color: #1d4ed8;
-            font-weight: 700;
-            font-size: 16px;
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+            width: 100%; padding: 14px 16px; border-radius: 12px; border: none;
+            background: #fff; color: #1d4ed8; font-weight: 800; font-size: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,.22);
           }
-          .btn-login:active {
-            transform: translateY(1px);
-          }
-          .hint {
-            margin-top: 12px;
-            font-size: 12px;
-            opacity: 0.9;
-          }
+          .btn-login:active { transform: translateY(1px); }
+          .hint { margin-top: 12px; font-size: 12px; opacity: .9; }
         `}</style>
       </div>
     );
@@ -312,16 +401,236 @@ useEffect(() => {
     <div className="page">
       <audio ref={beepRef} preload="auto" src="/beep.mp3" />
 
-      {/* Phần giao diện chính (form, danh sách, lịch sử) */}
-      {/* Bạn giữ nguyên phần này như phiên bản UI trước — hoặc nếu cần mình sẽ dán tiếp */}
+      {/* ====== KHU VỰC 1: TIÊU ĐỀ / ĐĂNG NHẬP ====== */}
+      <header className="header">
+        <div className="title">
+          <strong>AP - Truyền dịch</strong>
+          <div className="sub">Đăng nhập: {user.email}</div>
+        </div>
+        <div className="actions">
+          {notifPermission !== 'granted' && (
+            <button className="btn-outline" onClick={requestNotification}>
+              Bật thông báo
+            </button>
+          )}
+          <label className="sound">
+            <input
+              type="checkbox"
+              checked={soundOn}
+              onChange={(e) => setSoundOn(e.target.checked)}
+            />
+            Âm thanh khi app đang mở
+          </label>
+          <button className="btn-danger" onClick={signOut}>Đăng xuất</button>
+        </div>
+      </header>
 
+      {/* ====== KHU VỰC 2: NHẬP CA ====== */}
+      <section className="card">
+        <div className="card-head">
+          <h2>Tạo ca truyền</h2>
+        </div>
+
+        <div className="formcol">
+          <label>Bệnh nhân</label>
+          <input
+            placeholder="VD: Phạm Văn A"
+            value={patient}
+            onChange={(e) => setPatient(e.target.value)}
+          />
+
+          <label>Phòng</label>
+          <input
+            placeholder="VD: 305"
+            value={room}
+            onChange={(e) => setRoom(e.target.value)}
+          />
+
+          <label>Giường</label>
+          <input
+            placeholder="VD: 12B"
+            value={bed}
+            onChange={(e) => setBed(e.target.value)}
+          />
+
+          <label>Thể tích (ml)</label>
+          <input
+            type="number"
+            placeholder="VD: 500"
+            value={String(volume)}
+            onChange={(e) =>
+              setVolume(e.target.value ? Number(e.target.value) : '')
+            }
+          />
+
+          {/* YÊU CẦU: "Số giọt/ml" đặt trên "Tốc độ truyền" */}
+          <label>Số giọt/ml</label>
+          <input
+            type="number"
+            placeholder="VD: 20"
+            value={String(dropsPerMl)}
+            onChange={(e) =>
+              setDropsPerMl(e.target.value ? Number(e.target.value) : '')
+            }
+          />
+
+          <label>Tốc độ truyền (giọt/phút)</label>
+          <input
+            type="number"
+            placeholder="VD: 25"
+            value={String(dripRate)}
+            onChange={(e) =>
+              setDripRate(e.target.value ? Number(e.target.value) : '')
+            }
+          />
+
+          <label>Ghi chú</label>
+          <textarea
+            placeholder="…"
+            rows={4}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+
+          <div className="row">
+            <label className="ck">
+              <input
+                type="checkbox"
+                checked={wantEmail}
+                onChange={(e) => setWantEmail(e.target.checked)}
+              />
+              Nhận email khi ca kết thúc
+            </label>
+
+            <button className="btn" onClick={onCreate}>
+              Bắt đầu truyền
+            </button>
+          </div>
+
+          <div className="endhint">
+            {expectedEnd ? (
+              <>
+                Kết thúc dự kiến: <strong>{formatDateTime(expectedEnd)}</strong>
+              </>
+            ) : (
+              <span>Nhập đủ các trường để tính thời gian kết thúc.</span>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* ====== KHU VỰC 3: DANH SÁCH CA ĐANG CHẠY ====== */}
+      <section className="card">
+        <div className="card-head">
+          <h2>Ca đang chạy</h2>
+          <span className="badge-soft blue">{running.length}</span>
+        </div>
+
+        {running.length === 0 ? (
+          <div className="empty">Không có ca đang chạy.</div>
+        ) : (
+          <div className="list">
+            {running.map((r) => {
+              const leftSec = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
+              const col = colorFor(r.end_time);
+              const status = leftSec <= 0 ? 'đã kết thúc' : (r.status ?? 'đang truyền');
+
+              return (
+                <div className="rowitem" key={r.id}>
+                  <div className="cell">
+                    <div className="label">Bệnh nhân</div>
+                    <div className="value">{r.patient_name || '—'}</div>
+                  </div>
+                  <div className="cell">
+                    <div className="label">Phòng - Giường</div>
+                    <div className="value">{r.room || '—'} - {r.bed || '—'}</div>
+                  </div>
+                  <div className="cell">
+                    <div className="label">Kết thúc</div>
+                    <div className="value">{formatDateTime(r.end_time)}</div>
+                  </div>
+                  <div className="cell">
+                    <div className="label">Trạng thái</div>
+                    <div className="value">{status}</div>
+                  </div>
+                  <div className="count">
+                    <span className="badge-count" style={{ background: col }}>
+                      {secToHMS(leftSec)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* ====== KHU VỰC 4: LỊCH SỬ ====== */}
+      <section className="card">
+        <div className="card-head">
+          <h2>Lịch sử ca truyền</h2>
+          <button
+            className="btn-light"
+            onClick={async () => {
+              if (!confirm('Xoá toàn bộ lịch sử?')) return;
+              await supabase.from('infusions').delete().eq('status', 'completed');
+            }}
+          >
+            Xoá toàn bộ lịch sử
+          </button>
+        </div>
+
+        {history.length === 0 ? (
+          <div className="empty">Chưa có lịch sử.</div>
+        ) : (
+          <div className="list">
+            {history.map((h) => (
+              <div className="rowitem" key={h.id}>
+                <div className="cell">
+                  <div className="label">Bệnh nhân</div>
+                  <div className="value">{h.patient_name || '—'}</div>
+                </div>
+                <div className="cell">
+                  <div className="label">Phòng - Giường</div>
+                  <div className="value">{h.room || '—'} - {h.bed || '—'}</div>
+                </div>
+                <div className="cell">
+                  <div className="label">Kết thúc</div>
+                  <div className="value">{formatDateTime(h.end_time)}</div>
+                </div>
+                <div className="cell">
+                  <div className="label">Trạng thái</div>
+                  <div className="value">đã kết thúc</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <footer className="foot">Phát triển: Điều dưỡng An Phước</footer>
+
+      {/* ========== CSS ========== */}
       <style jsx>{`
+        :root {
+          --blue: #1d4ed8;
+          --blue-500: #2563eb;
+          --green: #22c55e;
+          --yellow: #f59e0b;
+          --red: #ef4444;
+          --bg: #f7fafc;
+          --card: #ffffff;
+          --line: #e5e7eb;
+          --muted: #6b7280;
+          --text: #111827;
+        }
         .page {
           max-width: 980px;
           margin: 0 auto;
           padding: 16px 14px 28px;
-          background: #f7fafc;
+          background: var(--bg);
           min-height: 100dvh;
+          color: var(--text);
         }
         .header {
           display: grid;
@@ -332,6 +641,7 @@ useEffect(() => {
         }
         .title strong {
           font-size: 22px;
+          letter-spacing: .2px;
         }
         .sub {
           font-size: 13px;
@@ -344,6 +654,7 @@ useEffect(() => {
           align-items: center;
           gap: 10px;
           justify-self: end;
+          flex-wrap: wrap;
         }
         .sound {
           display: inline-flex;
@@ -351,26 +662,60 @@ useEffect(() => {
           align-items: center;
           font-size: 13px;
           color: #374151;
+          background: #eef2ff;
+          padding: 6px 10px;
+          border-radius: 10px;
+          border: 1px solid #dbeafe;
         }
         .btn-outline {
           background: #fff;
-          border: 1px solid #e5e7eb;
+          border: 1px solid var(--line);
           padding: 8px 12px;
           border-radius: 10px;
-          font-weight: 600;
-          color: #ef4444;
+          font-weight: 700;
+          color: var(--blue);
         }
-        .card {
+        .btn-danger {
           background: #fff;
-          border: 1px solid #e5e7eb;
+          border: 1px solid var(--line);
+          padding: 8px 12px;
+          border-radius: 10px;
+          font-weight: 700;
+          color: var(--red);
+        }
+
+        .card {
+          background: var(--card);
+          border: 1px solid var(--line);
           border-radius: 14px;
           padding: 14px;
           margin-top: 12px;
+          box-shadow: 0 6px 24px rgba(0,0,0,.04);
+        }
+        .card-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          margin-bottom: 10px;
         }
         h2 {
           font-size: 18px;
-          margin: 2px 2px 10px;
+          margin: 2px 2px 6px;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
         }
+        .badge-soft {
+          display: inline-block;
+          font-size: 12px;
+          padding: 6px 10px;
+          border-radius: 999px;
+          background: #eff6ff;
+          color: var(--blue);
+          border: 1px solid #dbeafe;
+        }
+
         .formcol {
           display: grid;
           grid-template-columns: 1fr;
@@ -380,18 +725,15 @@ useEffect(() => {
           font-size: 13px;
           color: #374151;
         }
-        input,
-        textarea {
+        input, textarea {
           width: 100%;
           background: #f9fafb;
-          border: 1px solid #e5e7eb;
+          border: 1px solid var(--line);
           padding: 12px 12px;
           border-radius: 10px;
           font-size: 16px;
         }
-        textarea {
-          min-height: 120px;
-        }
+        textarea { min-height: 120px; }
         .row {
           display: flex;
           align-items: center;
@@ -406,89 +748,77 @@ useEffect(() => {
           font-size: 14px;
         }
         .btn {
-          background: #2563eb;
+          background: linear-gradient(90deg, var(--blue-500), var(--green));
           color: #fff;
           border: 0;
           padding: 12px 14px;
           border-radius: 10px;
-          font-weight: 700;
+          font-weight: 800;
           margin-left: auto;
+          letter-spacing: .2px;
         }
         .endhint {
           margin-top: 6px;
           font-size: 12px;
-          color: #6b7280;
+          color: var(--muted);
         }
-        .list {
-          display: grid;
-          gap: 8px;
-        }
+
+        .list { display: grid; gap: 8px; }
         .rowitem {
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 10px;
           align-items: center;
           padding: 10px;
-          border: 1px solid #e5e7eb;
+          border: 1px solid var(--line);
           border-radius: 12px;
+          background: #ffffff;
         }
-        .cell .label {
-          font-size: 11px;
-          color: #6b7280;
-        }
-        .cell .value {
-          font-size: 15px;
-          font-weight: 600;
-        }
+        .cell .label { font-size: 11px; color: var(--muted); }
+        .cell .value { font-size: 15px; font-weight: 600; }
         .count {
           grid-column: 1 / -1;
           display: flex;
           justify-content: flex-start;
         }
-        .badge {
+        .badge-count {
           display: inline-block;
           color: #fff;
-          font-weight: 800;
-          letter-spacing: 0.5px;
-          padding: 8px 12px;
+          font-weight: 900;
+          letter-spacing: .5px;
+          padding: 10px 14px;
           border-radius: 999px;
           min-width: 120px;
           text-align: center;
           font-variant-numeric: tabular-nums;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+          box-shadow: 0 10px 18px rgba(0,0,0,.08);
         }
-        .empty {
-          padding: 6px 8px;
-          color: #6b7280;
-          font-size: 14px;
-        }
-        .row.space {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-        }
+
+        .empty { padding: 6px 8px; color: var(--muted); font-size: 14px; }
+
         .btn-light {
           background: #f3f4f6;
-          border: 1px solid #e5e7eb;
+          border: 1px solid var(--line);
           padding: 8px 12px;
           border-radius: 10px;
-          font-weight: 600;
+          font-weight: 700;
+          color: #111827;
         }
+
         .foot {
           text-align: center;
-          color: #6b7280;
+          color: var(--muted);
           font-size: 12px;
           margin-top: 16px;
         }
+
+        /* Desktop */
         @media (min-width: 720px) {
           .rowitem {
             grid-template-columns: 1.2fr 0.9fr 1fr 0.9fr auto;
             align-items: center;
           }
-          .count {
-            grid-column: auto;
-            justify-content: flex-end;
-          }
+          .count { grid-column: auto; justify-content: flex-end; }
         }
       `}</style>
     </div>
