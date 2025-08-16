@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { getSupabase } from '@/lib/supabase';
+import { supabase } from '../lib/supabaseClient';
 
 type Props = { userId: string };
 
@@ -36,7 +36,6 @@ function remainClass(ms: number) {
 }
 
 export default function InfusionList({ userId }: Props) {
-  const supabase = getSupabase();
   const [rows, setRows] = useState<Infusion[]>([]);
   const [now, setNow] = useState<number>(Date.now());
 

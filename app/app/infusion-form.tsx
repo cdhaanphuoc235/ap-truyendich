@@ -1,13 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { getSupabase } from '@/lib/supabase';
+import { supabase } from '../lib/supabaseClient';
 
 type Props = { userId: string };
 
 export default function InfusionForm({ userId }: Props) {
-  const supabase = getSupabase();
-
   const [patientName, setPatientName] = useState('');
   const [room, setRoom] = useState('');
   const [bed, setBed] = useState('');
@@ -18,10 +16,8 @@ export default function InfusionForm({ userId }: Props) {
   const [notifyEmail, setNotifyEmail] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const calcMinutes = (vMl: number, dpm: number, dpmMl: number) => {
-    // Thời gian (phút) = (Thể tích (ml) x Số giọt/ml) / Tốc độ (giọt/phút)
-    return (vMl * dpmMl) / dpm;
-  };
+  const calcMinutes = (vMl: number, dpm: number, dpmMl: number) =>
+    (vMl * dpmMl) / dpm;
 
   const handleStart = async () => {
     const v = Number(volumeMl);
@@ -52,16 +48,15 @@ export default function InfusionForm({ userId }: Props) {
       status: 'scheduled',
       notes: notes || null,
     });
-
     setSaving(false);
+
     if (error) { alert(error.message); return; }
 
-    // reset form để nhập ca khác
+    // reset form
     setPatientName(''); setRoom(''); setBed('');
     setVolumeMl(''); setDripRate(''); setDropsPerMl(20);
     setNotes(''); setNotifyEmail(false);
 
-    // báo cho danh sách reload
     window.dispatchEvent(new CustomEvent('infusion:created'));
   };
 

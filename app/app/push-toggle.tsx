@@ -1,14 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getSupabase } from '@/lib/supabase';
+import { supabase } from '../lib/supabaseClient';
 
 type Props = { userId: string };
 
 const VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || '';
 
 export default function PushToggle({ userId }: Props) {
-  const supabase = getSupabase();
   const [supported, setSupported] = useState(true);
   const [enabled, setEnabled] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
@@ -18,7 +17,6 @@ export default function PushToggle({ userId }: Props) {
     const ok = 'serviceWorker' in navigator && 'PushManager' in window;
     setSupported(ok);
     setSoundEnabled(localStorage.getItem('ap_sound_enabled') === '1');
-    // kiểm tra nhanh đã sub chưa
     (async () => {
       try {
         const reg = await navigator.serviceWorker.ready;
@@ -50,9 +48,10 @@ export default function PushToggle({ userId }: Props) {
         applicationServerKey: await urlBase64ToUint8Array(VAPID_PUBLIC),
       });
 
-      // lưu subscription lên Supabase
       const { endpoint } = sub;
-      const rawKey = (key: string) => btoa(String.fromCharCode.apply(null, new Uint8Array(sub.getKey(key) as ArrayBuffer) as unknown as number[]));
+      const rawKey = (key: string) => btoa(
+        String.fromCharCode.apply(null, new Uint8Array(sub.getKey(key) as ArrayBuffer) as unknown as number[])
+      );
       const p256dh = rawKey('p256dh');
       const auth = rawKey('auth');
 
@@ -87,7 +86,6 @@ export default function PushToggle({ userId }: Props) {
   const toggleSound = async (on: boolean) => {
     setSoundEnabled(on);
     localStorage.setItem('ap_sound_enabled', on ? '1' : '0');
-    // Khởi tạo AudioContext sau thao tác người dùng để lần sau có thể phát âm thanh
     if (on) {
       try {
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();

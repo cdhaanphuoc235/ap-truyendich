@@ -35,7 +35,6 @@ export default function NotifyClient() {
       if (m.type === 'INFUSION_ALERT') {
         const t = { title: m.title || 'Thông báo', body: m.body || '' };
         setToast(t);
-        // chỉ phát âm thanh nếu người dùng đã bật tuỳ chọn
         if (localStorage.getItem('ap_sound_enabled') === '1') {
           playBeep();
         }

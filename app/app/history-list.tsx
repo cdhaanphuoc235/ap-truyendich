@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { getSupabase } from '@/lib/supabase';
+import { supabase } from '../lib/supabaseClient';
 
 type Props = { userId: string };
 
@@ -16,7 +16,6 @@ type Infusion = {
 };
 
 export default function HistoryList({ userId }: Props) {
-  const supabase = getSupabase();
   const [rows, setRows] = useState<Infusion[]>([]);
   const [now, setNow] = useState<number>(Date.now());
   const [busy, setBusy] = useState(false);
@@ -58,7 +57,6 @@ export default function HistoryList({ userId }: Props) {
 
   const deleteAllHistory = async () => {
     if (busy) return;
-    // Đếm trước để xác nhận
     const nowIso = new Date().toISOString();
     const { count } = await supabase
       .from('infusions')
