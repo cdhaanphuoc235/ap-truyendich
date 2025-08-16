@@ -4,13 +4,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import { createClient, User } from '@supabase/supabase-js';
 
-// ==== Supabase client (GIỮ NGUYÊN cấu hình env của bạn) ====
+// ===== Supabase client (giữ nguyên ENV của bạn) =====
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL as string,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string
 );
 
-// ==== Kiểu dữ liệu ====
+// ===== Kiểu dữ liệu =====
 type Infusion = {
   id: string;
   user_id: string | null;
@@ -23,7 +23,7 @@ type Infusion = {
   notes: string | null;
   start_time: string;             // ISO
   end_time: string;               // ISO
-  status: 'scheduled' | 'running' | 'completed' | null;
+  status: string | null;          // có thể là 'scheduled' | 'running' | 'completed' tùy DB bạn
   notify_email: boolean | null;
   email_sent_at?: string | null;
   push_sent_at?: string | null;
@@ -40,7 +40,7 @@ function formatDateTime(iso: string) {
   return `${hh}:${mm}:${ss} ${dd}/${mo}/${yr}`;
 }
 
-// ⛔️ SỬA: luôn hiển thị >= 00:00:00 (không âm)
+// ⛔️ Luôn hiển thị >= 00:00:00 (không âm)
 function secToHMS(total: number) {
   const s = Math.max(0, Math.floor(total));
   const h = Math.floor(s / 3600);
@@ -108,8 +108,18 @@ export default function Page() {
   const [wantEmail, setWantEmail] = useState(false);
 
   // ===== Data =====
-  const [running, setRunning] = useState<Infusion[]>([]);
-  const [history, setHistory] = useState<Infusion[]>([]);
+  const [rows, setRows] = useState<Infusion[]>([]);
+  const now = useNow(1000);
+
+  // Tách "đang chạy" và "lịch sử" trên UI theo thời gian hiện tại
+  const running = useMemo(
+    () => rows.filter(r => new Date(r.end_time).getTime() - now > 0),
+    [rows, now]
+  );
+  const history = useMemo(
+    () => rows.filter(r => new Date(r.end_time).getTime() - now <= 0),
+    [rows, now]
+  );
 
   // Load + realtime
   useEffect(() => {
@@ -119,18 +129,7 @@ export default function Page() {
         .from<Infusion>('infusions')
         .select('*')
         .order('end_time', { ascending: true });
-
-      if (!error && data) {
-        const now = Date.now();
-        setRunning(
-          data.filter(
-            (x) =>
-              (x.status === 'running' || x.status === 'scheduled') &&
-              new Date(x.end_time).getTime() - now >= -24 * 3600 * 1000
-          )
-        );
-        setHistory(data.filter((x) => x.status === 'completed'));
-      }
+      if (!error && data) setRows(data);
     };
     load();
     const ch = supabase
@@ -141,10 +140,7 @@ export default function Page() {
         () => load()
       )
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(ch);
-    };
+    return () => { supabase.removeChannel(ch); };
   }, [user]);
 
   // Tính end_time dự kiến từ inputs
@@ -174,7 +170,7 @@ export default function Page() {
       notes: notes.trim() || null,
       start_time: new Date().toISOString(),
       end_time: expectedEnd,
-      status: 'scheduled',
+      status: 'scheduled',       // GIỮ NGUYÊN theo hệ thống hiện tại
       notify_email: !!wantEmail,
     };
 
@@ -184,14 +180,8 @@ export default function Page() {
       alert('Lỗi lưu ca truyền. Vui lòng thử lại!');
       return;
     }
-    // reset
-    setPatient('');
-    setRoom('');
-    setBed('');
-    setVolume('');
-    setDripRate('');
-    setNotes('');
-    setWantEmail(false);
+    setPatient(''); setRoom(''); setBed('');
+    setVolume(''); setDripRate(''); setNotes(''); setWantEmail(false);
   };
 
   // Auth
@@ -201,24 +191,21 @@ export default function Page() {
       options: { redirectTo: window.location.origin }
     });
   };
-  const signOut = async () => {
-    await supabase.auth.signOut();
-  };
+  const signOut = async () => { await supabase.auth.signOut(); };
 
   // ====== Đếm ngược + màu + âm thanh ======
-  const now = useNow(1000);
   const colorFor = (endISO: string) => {
     const left = Math.floor((new Date(endISO).getTime() - now) / 1000);
-    if (left <= 0) return '#ef4444'; // đỏ
-    if (left <= 5 * 60) return '#f59e0b'; // vàng
-    return '#22c55e'; // xanh
+    if (left <= 0) return '#ef4444';        // đỏ
+    if (left <= 5 * 60) return '#f59e0b';   // vàng
+    return '#22c55e';                       // xanh lá
   };
 
-  // Beep khi ≤ 5 phút và khi hết giờ (chỉ 1 lần ở mỗi ngưỡng)
+  // Beep khi ≤ 5 phút và khi hết giờ (mỗi ngưỡng 1 lần)
   const prevRef = useRef<Record<string, number>>({});
   useEffect(() => {
     if (!soundOn) return;
-    const doBeep = () => {
+    const beep = () => {
       try {
         if (!beepRef.current) return;
         beepRef.current.currentTime = 0;
@@ -228,22 +215,21 @@ export default function Page() {
     running.forEach((r) => {
       const left = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
       const prev = prevRef.current[r.id] ?? Infinity;
-      if (prev > 300 && left <= 300 && left > 0) doBeep();
-      if (prev > 0 && left <= 0) doBeep();
+      if (prev > 300 && left <= 300 && left > 0) beep();
+      if (prev > 0 && left <= 0) beep();
       prevRef.current[r.id] = left;
     });
   }, [now, running, soundOn]);
 
-  // ====== Chuyển ca hết giờ xuống lịch sử + Thông báo + Email ======
+  // ====== Khi hết giờ: Thông báo + Email (không update status để tránh CHECK constraint) ======
   const processedRef = useRef<Set<string>>(new Set());
 
   const showNotification = async (title: string, body: string) => {
     try {
       if (!('Notification' in window)) return false;
       if (Notification.permission !== 'granted') return false;
-
       const reg = await (navigator as any).serviceWorker?.getRegistration?.();
-      if (reg && reg.showNotification) {
+      if (reg?.showNotification) {
         await reg.showNotification(title, {
           body,
           icon: '/icon-192.png',
@@ -255,15 +241,12 @@ export default function Page() {
         new Notification(title, { body, icon: '/icon-192.png' });
       }
       return true;
-    } catch {
-      return false;
-    }
+    } catch { return false; }
   };
 
   const sendCompletionEmailIfNeeded = async (inf: Infusion, recipient?: string | null) => {
     if (!inf.notify_email) return false;
     try {
-      // GIỮ NGUYÊN luồng Resend qua API route của bạn
       const res = await fetch('/api/notify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -286,111 +269,67 @@ export default function Page() {
     }
   };
 
-  const completeInfusionOnce = async (inf: Infusion) => {
+  const onCompletedOnce = async (inf: Infusion) => {
     if (processedRef.current.has(inf.id)) return;
     processedRef.current.add(inf.id);
 
-    // 🟢 Optimistic: chuyển ngay sang lịch sử (UI không còn chạy về số âm)
-    setRunning((prev) => prev.filter((x) => x.id !== inf.id));
-    setHistory((prev) => [{ ...inf, status: 'completed' }, ...prev]);
-
-    // 1) Update trạng thái trên DB
-    const patch: Partial<Infusion> = { status: 'completed' };
-    const { error: upErr } = await supabase.from('infusions').update(patch).eq('id', inf.id);
-    if (upErr) {
-      console.error('Update status failed', upErr);
-      // rollback UI nếu lỗi
-      setHistory((prev) => prev.filter((x) => x.id !== inf.id));
-      setRunning((prev) => [{ ...inf }, ...prev]);
-      processedRef.current.delete(inf.id);
-      return;
-    }
-
-    // 2) Thông báo
-    let pushOk = false;
+    // 1) Hiển thị thông báo (nếu có quyền)
     if (Notification.permission === 'granted') {
-      pushOk = await showNotification(
+      const pushOk = await showNotification(
         'Ca truyền đã kết thúc',
         `BN: ${inf.patient_name || '—'} | Phòng ${inf.room || '—'} - Giường ${inf.bed || '—'}`
       );
-    }
-    if (pushOk) {
-      await supabase.from('infusions').update({ push_sent_at: new Date().toISOString() }).eq('id', inf.id);
+      if (pushOk) {
+        // chỉ cập nhật cột push_sent_at (không đụng vào status)
+        await supabase.from('infusions')
+          .update({ push_sent_at: new Date().toISOString() })
+          .eq('id', inf.id);
+      }
     }
 
-    // 3) Email (tôn trọng notify_email)
+    // 2) Gửi email (nếu người dùng chọn)
     const emailOk = await sendCompletionEmailIfNeeded(inf, user?.email ?? null);
     if (emailOk) {
-      await supabase.from('infusions').update({ email_sent_at: new Date().toISOString() }).eq('id', inf.id);
+      await supabase.from('infusions')
+        .update({ email_sent_at: new Date().toISOString() })
+        .eq('id', inf.id);
     }
   };
 
-  // Quét ca đang chạy, ca nào hết giờ -> complete
+  // Theo dõi các ca đã hết giờ -> chạy 1 lần
   useEffect(() => {
-    if (!running.length) return;
-    running.forEach((r) => {
+    rows.forEach((r) => {
       const left = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
-      if (left <= 0 && r.status !== 'completed') {
-        completeInfusionOnce(r);
+      if (left <= 0 && !processedRef.current.has(r.id)) {
+        onCompletedOnce(r);
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [now, running]);
+  }, [now, rows]);
 
   // ======= UI =======
   if (!user) {
-    // ===== MÀN HÌNH ĐĂNG NHẬP =====
     return (
       <div className="login-wrap">
         <div className="login-card">
           <div className="logo">
-            <Image
-              src="/icon-512.png"
-              alt="AP Truyền dịch"
-              width={128}
-              height={128}
-              priority
-            />
+            <Image src="/icon-512.png" alt="AP Truyền dịch" width={128} height={128} priority />
           </div>
           <h1>AP - Truyền dịch</h1>
-          <p className="desc">
-            Ứng dụng tính thời gian truyền dịch cho điều dưỡng – Bệnh viện An Phước
-          </p>
-          <button className="btn-login" onClick={signIn}>
-            Đăng nhập bằng Google
-          </button>
+          <p className="desc">Ứng dụng tính thời gian truyền dịch cho điều dưỡng – Bệnh viện An Phước</p>
+          <button className="btn-login" onClick={signIn}>Đăng nhập bằng Google</button>
           <p className="hint">Vui lòng đăng nhập để tiếp tục</p>
         </div>
 
         <style jsx>{`
-          .login-wrap {
-            min-height: 100dvh;
-            display: grid;
-            place-items: center;
-            background: linear-gradient(180deg, #1d4ed8, #60a5fa);
-            padding: 24px;
-            color: #fff;
-          }
-          .login-card {
-            width: 100%;
-            max-width: 420px;
-            text-align: center;
-            background: rgba(255, 255, 255, 0.12);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 16px;
-            padding: 28px 20px;
-            backdrop-filter: blur(6px);
-          }
-          .logo { display: grid; place-items: center; margin-bottom: 12px; }
-          h1 { font-size: 22px; margin: 6px 0 8px; font-weight: 800; letter-spacing: .2px; }
-          .desc { opacity: .95; font-size: 14px; margin-bottom: 18px; }
-          .btn-login {
-            width: 100%; padding: 14px 16px; border-radius: 12px; border: none;
-            background: #fff; color: #1d4ed8; font-weight: 800; font-size: 16px;
-            box-shadow: 0 10px 30px rgba(0,0,0,.22);
-          }
-          .btn-login:active { transform: translateY(1px); }
-          .hint { margin-top: 12px; font-size: 12px; opacity: .9; }
+          .login-wrap{min-height:100dvh;display:grid;place-items:center;background:linear-gradient(180deg,#1d4ed8,#60a5fa);padding:24px;color:#fff}
+          .login-card{width:100%;max-width:420px;text-align:center;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:16px;padding:28px 20px;backdrop-filter:blur(6px)}
+          .logo{display:grid;place-items:center;margin-bottom:12px}
+          h1{font-size:22px;margin:6px 0 8px;font-weight:800;letter-spacing:.2px}
+          .desc{opacity:.95;font-size:14px;margin-bottom:18px}
+          .btn-login{width:100%;padding:14px 16px;border-radius:12px;border:none;background:#fff;color:#1d4ed8;font-weight:800;font-size:16px;box-shadow:0 10px 30px rgba(0,0,0,.22)}
+          .btn-login:active{transform:translateY(1px)}
+          .hint{margin-top:12px;font-size:12px;opacity:.9}
         `}</style>
       </div>
     );
@@ -400,7 +339,7 @@ export default function Page() {
     <div className="page">
       <audio ref={beepRef} preload="auto" src="/beep.mp3" />
 
-      {/* ====== 1) TIÊU ĐỀ / ĐĂNG NHẬP ====== */}
+      {/* ===== 1) TIÊU ĐỀ ===== */}
       <header className="header">
         <div className="title">
           <strong>AP - Truyền dịch</strong>
@@ -408,117 +347,50 @@ export default function Page() {
         </div>
         <div className="actions">
           {notifPermission !== 'granted' && (
-            <button className="btn-outline" onClick={requestNotification}>
-              Bật thông báo
-            </button>
+            <button className="btn-outline" onClick={requestNotification}>Bật thông báo</button>
           )}
           <label className="sound">
-            <input
-              type="checkbox"
-              checked={soundOn}
-              onChange={(e) => setSoundOn(e.target.checked)}
-            />
+            <input type="checkbox" checked={soundOn} onChange={(e) => setSoundOn(e.target.checked)} />
             Âm thanh khi app đang mở
           </label>
           <button className="btn-danger" onClick={signOut}>Đăng xuất</button>
         </div>
       </header>
 
-      {/* ====== 2) NHẬP CA ====== */}
+      {/* ===== 2) NHẬP CA ===== */}
       <section className="card">
-        <div className="card-head">
-          <h2>Tạo ca truyền</h2>
-        </div>
-
+        <div className="card-head"><h2>Tạo ca truyền</h2></div>
         <div className="formcol">
           <label>Bệnh nhân</label>
-          <input
-            placeholder="VD: Phạm Văn A"
-            value={patient}
-            onChange={(e) => setPatient(e.target.value)}
-          />
-
+          <input placeholder="VD: Phạm Văn A" value={patient} onChange={(e) => setPatient(e.target.value)} />
           <label>Phòng</label>
-          <input
-            placeholder="VD: 305"
-            value={room}
-            onChange={(e) => setRoom(e.target.value)}
-          />
-
+          <input placeholder="VD: 305" value={room} onChange={(e) => setRoom(e.target.value)} />
           <label>Giường</label>
-          <input
-            placeholder="VD: 12B"
-            value={bed}
-            onChange={(e) => setBed(e.target.value)}
-          />
-
+          <input placeholder="VD: 12B" value={bed} onChange={(e) => setBed(e.target.value)} />
           <label>Thể tích (ml)</label>
-          <input
-            type="number"
-            placeholder="VD: 500"
-            value={String(volume)}
-            onChange={(e) =>
-              setVolume(e.target.value ? Number(e.target.value) : '')
-            }
-          />
-
-          {/* YÊU CẦU: "Số giọt/ml" đặt trên "Tốc độ truyền" */}
+          <input type="number" placeholder="VD: 500" value={String(volume)} onChange={(e) => setVolume(e.target.value ? Number(e.target.value) : '')} />
           <label>Số giọt/ml</label>
-          <input
-            type="number"
-            placeholder="VD: 20"
-            value={String(dropsPerMl)}
-            onChange={(e) =>
-              setDropsPerMl(e.target.value ? Number(e.target.value) : '')
-            }
-          />
-
+          <input type="number" placeholder="VD: 20" value={String(dropsPerMl)} onChange={(e) => setDropsPerMl(e.target.value ? Number(e.target.value) : '')} />
           <label>Tốc độ truyền (giọt/phút)</label>
-          <input
-            type="number"
-            placeholder="VD: 25"
-            value={String(dripRate)}
-            onChange={(e) =>
-              setDripRate(e.target.value ? Number(e.target.value) : '')
-            }
-          />
-
+          <input type="number" placeholder="VD: 25" value={String(dripRate)} onChange={(e) => setDripRate(e.target.value ? Number(e.target.value) : '')} />
           <label>Ghi chú</label>
-          <textarea
-            placeholder="…"
-            rows={4}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-
+          <textarea placeholder="…" rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} />
           <div className="row">
             <label className="ck">
-              <input
-                type="checkbox"
-                checked={wantEmail}
-                onChange={(e) => setWantEmail(e.target.checked)}
-              />
+              <input type="checkbox" checked={wantEmail} onChange={(e) => setWantEmail(e.target.checked)} />
               Nhận email khi ca kết thúc
             </label>
-
-            <button className="btn" onClick={onCreate}>
-              Bắt đầu truyền
-            </button>
+            <button className="btn" onClick={onCreate}>Bắt đầu truyền</button>
           </div>
-
           <div className="endhint">
-            {expectedEnd ? (
-              <>
-                Kết thúc dự kiến: <strong>{formatDateTime(expectedEnd)}</strong>
-              </>
-            ) : (
-              <span>Nhập đủ các trường để tính thời gian kết thúc.</span>
-            )}
+            {expectedEnd
+              ? <>Kết thúc dự kiến: <strong>{formatDateTime(expectedEnd)}</strong></>
+              : <span>Nhập đủ các trường để tính thời gian kết thúc.</span>}
           </div>
         </div>
       </section>
 
-      {/* ====== 3) CA ĐANG CHẠY ====== */}
+      {/* ===== 3) CA ĐANG CHẠY ===== */}
       <section className="card">
         <div className="card-head">
           <h2>Ca đang chạy</h2>
@@ -531,32 +403,16 @@ export default function Page() {
           <div className="list">
             {running.map((r) => {
               const rawLeft = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
-              const leftSec = Math.max(0, rawLeft); // ⛔️ SỬA: clamp 0s
+              const leftSec = Math.max(0, rawLeft);
               const col = colorFor(r.end_time);
-              const status = rawLeft <= 0 ? 'đã kết thúc' : (r.status ?? 'đang truyền');
-
               return (
                 <div className="rowitem" key={r.id}>
-                  <div className="cell">
-                    <div className="label">Bệnh nhân</div>
-                    <div className="value">{r.patient_name || '—'}</div>
-                  </div>
-                  <div className="cell">
-                    <div className="label">Phòng - Giường</div>
-                    <div className="value">{r.room || '—'} - {r.bed || '—'}</div>
-                  </div>
-                  <div className="cell">
-                    <div className="label">Kết thúc</div>
-                    <div className="value">{formatDateTime(r.end_time)}</div>
-                  </div>
-                  <div className="cell">
-                    <div className="label">Trạng thái</div>
-                    <div className="value">{status}</div>
-                  </div>
+                  <div className="cell"><div className="label">Bệnh nhân</div><div className="value">{r.patient_name || '—'}</div></div>
+                  <div className="cell"><div className="label">Phòng - Giường</div><div className="value">{r.room || '—'} - {r.bed || '—'}</div></div>
+                  <div className="cell"><div className="label">Kết thúc</div><div className="value">{formatDateTime(r.end_time)}</div></div>
+                  <div className="cell"><div className="label">Trạng thái</div><div className="value">đang truyền</div></div>
                   <div className="count">
-                    <span className="badge-count" style={{ background: col }}>
-                      {secToHMS(leftSec)}
-                    </span>
+                    <span className="badge-count" style={{ background: col }}>{secToHMS(leftSec)}</span>
                   </div>
                 </div>
               );
@@ -565,7 +421,7 @@ export default function Page() {
         )}
       </section>
 
-      {/* ====== 4) LỊCH SỬ ====== */}
+      {/* ===== 4) LỊCH SỬ ===== */}
       <section className="card">
         <div className="card-head">
           <h2>Lịch sử ca truyền</h2>
@@ -573,11 +429,11 @@ export default function Page() {
             className="btn-light"
             onClick={async () => {
               if (!confirm('Xoá toàn bộ lịch sử?')) return;
-              await supabase.from('infusions').delete().eq('status', 'completed');
+              // Xoá các ca đã qua giờ (end_time <= now) — không phụ thuộc cột status
+              const nowISO = new Date().toISOString();
+              await supabase.from('infusions').delete().lte('end_time', nowISO);
             }}
-          >
-            Xoá toàn bộ lịch sử
-          </button>
+          >Xoá toàn bộ lịch sử</button>
         </div>
 
         {history.length === 0 ? (
@@ -586,241 +442,14 @@ export default function Page() {
           <div className="list">
             {history.map((h) => (
               <div className="rowitem" key={h.id}>
-                <div className="cell">
-                  <div className="label">Bệnh nhân</div>
-                  <div className="value">{h.patient_name || '—'}</div>
-                </div>
-                <div className="cell">
-                  <div className="label">Phòng - Giường</div>
-                  <div className="value">{h.room || '—'} - {h.bed || '—'}</div>
-                </div>
-                <div className="cell">
-                  <div className="label">Kết thúc</div>
-                  <div className="value">{formatDateTime(h.end_time)}</div>
-                </div>
-                <div className="cell">
-                  <div className="label">Trạng thái</div>
-                  <div className="value">đã kết thúc</div>
-                </div>
+                <div className="cell"><div className="label">Bệnh nhân</div><div className="value">{h.patient_name || '—'}</div></div>
+                <div className="cell"><div className="label">Phòng - Giường</div><div className="value">{h.room || '—'} - {h.bed || '—'}</div></div>
+                <div className="cell"><div className="label">Kết thúc</div><div className="value">{formatDateTime(h.end_time)}</div></div>
+                <div className="cell"><div className="label">Trạng thái</div><div className="value">đã kết thúc</div></div>
               </div>
             ))}
           </div>
         )}
       </section>
 
-      <footer className="foot">Phát triển: Điều dưỡng An Phước</footer>
-
-      {/* ========== CSS ========== */}
-      <style jsx>{`
-        :root {
-          --blue: #1d4ed8;
-          --blue-500: #2563eb;
-          --green: #22c55e;
-          --yellow: #f59e0b;
-          --red: #ef4444;
-          --bg: #f7fafc;
-          --card: #ffffff;
-          --line: #e5e7eb;
-          --muted: #6b7280;
-          --text: #111827;
-        }
-        .page {
-          max-width: 980px;
-          margin: 0 auto;
-          padding: 16px 14px 28px;
-          background: var(--bg);
-          min-height: 100dvh;
-          color: var(--text);
-        }
-        .header {
-          display: grid;
-          grid-template-columns: 1fr auto;
-          gap: 12px;
-          align-items: center;
-          margin-bottom: 12px;
-        }
-        .title strong {
-          font-size: 22px;
-          letter-spacing: .2px;
-        }
-        .sub {
-          font-size: 13px;
-          color: #374151;
-          opacity: 0.9;
-          margin-top: 2px;
-        }
-        .actions {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          justify-self: end;
-          flex-wrap: wrap;
-        }
-        .sound {
-          display: inline-flex;
-          gap: 8px;
-          align-items: center;
-          font-size: 13px;
-          color: #374151;
-          background: #eef2ff;
-          padding: 6px 10px;
-          border-radius: 10px;
-          border: 1px solid #dbeafe;
-        }
-        .btn-outline {
-          background: #fff;
-          border: 1px solid var(--line);
-          padding: 8px 12px;
-          border-radius: 10px;
-          font-weight: 700;
-          color: var(--blue);
-        }
-        .btn-danger {
-          background: #fff;
-          border: 1px solid var(--line);
-          padding: 8px 12px;
-          border-radius: 10px;
-          font-weight: 700;
-          color: var(--red);
-        }
-
-        .card {
-          background: var(--card);
-          border: 1px solid var(--line);
-          border-radius: 14px;
-          padding: 14px;
-          margin-top: 12px;
-          box-shadow: 0 6px 24px rgba(0,0,0,.04);
-        }
-        .card-head {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          margin-bottom: 10px;
-        }
-        h2 {
-          font-size: 18px;
-          margin: 2px 2px 6px;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .badge-soft {
-          display: inline-block;
-          font-size: 12px;
-          padding: 6px 10px;
-          border-radius: 999px;
-          background: #eff6ff;
-          color: var(--blue);
-          border: 1px solid #dbeafe;
-        }
-
-        .formcol {
-          display: grid;
-          grid-template-columns: 1fr;
-          gap: 8px;
-        }
-        label {
-          font-size: 13px;
-          color: #374151;
-        }
-        input, textarea {
-          width: 100%;
-          background: #f9fafb;
-          border: 1px solid var(--line);
-          padding: 12px 12px;
-          border-radius: 10px;
-          font-size: 16px;
-        }
-        textarea { min-height: 120px; }
-        .row {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          margin-top: 8px;
-          flex-wrap: wrap;
-        }
-        .ck {
-          display: inline-flex;
-          gap: 8px;
-          align-items: center;
-          font-size: 14px;
-        }
-        .btn {
-          background: linear-gradient(90deg, var(--blue-500), var(--green));
-          color: #fff;
-          border: 0;
-          padding: 12px 14px;
-          border-radius: 10px;
-          font-weight: 800;
-          margin-left: auto;
-          letter-spacing: .2px;
-        }
-        .endhint {
-          margin-top: 6px;
-          font-size: 12px;
-          color: var(--muted);
-        }
-
-        .list { display: grid; gap: 8px; }
-        .rowitem {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
-          align-items: center;
-          padding: 10px;
-          border: 1px solid var(--line);
-          border-radius: 12px;
-          background: #ffffff;
-        }
-        .cell .label { font-size: 11px; color: var(--muted); }
-        .cell .value { font-size: 15px; font-weight: 600; }
-        .count {
-          grid-column: 1 / -1;
-          display: flex;
-          justify-content: flex-start;
-        }
-        .badge-count {
-          display: inline-block;
-          color: #fff;
-          font-weight: 900;
-          letter-spacing: .5px;
-          padding: 10px 14px;
-          border-radius: 999px;
-          min-width: 120px;
-          text-align: center;
-          font-variant-numeric: tabular-nums;
-          box-shadow: 0 10px 18px rgba(0,0,0,.08);
-        }
-
-        .empty { padding: 6px 8px; color: var(--muted); font-size: 14px; }
-
-        .btn-light {
-          background: #f3f4f6;
-          border: 1px solid var(--line);
-          padding: 8px 12px;
-          border-radius: 10px;
-          font-weight: 700;
-          color: #111827;
-        }
-
-        .foot {
-          text-align: center;
-          color: var(--muted);
-          font-size: 12px;
-          margin-top: 16px;
-        }
-
-        /* Desktop */
-        @media (min-width: 720px) {
-          .rowitem {
-            grid-template-columns: 1.2fr 0.9fr 1fr 0.9fr auto;
-            align-items: center;
-          }
-          .count { grid-column: auto; justify-content: flex-end; }
-        }
-      `}</style>
-    </div>
-  );
-}
+      <footer className="foot">Phát triển: Điều dư
