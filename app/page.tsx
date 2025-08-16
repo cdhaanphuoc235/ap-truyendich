@@ -149,7 +149,8 @@ export default function Page() {
       notify_email: !!wantEmail,
     };
 
-    const { error } = await supabase.from('infusions').insert(payload);
+    const { error } = await supabase
+.from('infusions').insert(payload);
     if (error) {
       console.error(error);
       alert('Lỗi lưu ca truyền. Vui lòng thử lại!');
@@ -184,35 +185,46 @@ export default function Page() {
   };
 
   const prevRef = useRef<Record<string, number>>({});
-  useEffect(() => {
-    if (!soundOn) return;
-    const doBeep = () => {
-      try {
-        beepRef.current?.play().catch(() => {});
-      } catch {}
-    };
+useEffect(() => {
+  if (!soundOn) return;
+  const doBeep = () => {
+    try {
+      beepRef.current?.play().catch(() => {});
+    } catch {}
+  };
 
-    running.forEach(async (r) => {
-      const left = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
-      const prev = prevRef.current[r.id] ?? Infinity;
+  running.forEach(async (r) => {
+    const left = Math.floor((new Date(r.end_time).getTime() - now) / 1000);
+    const prev = prevRef.current[r.id] ?? Infinity;
 
-      if (prev > 300 && left <= 300 && left > 0) doBeep();
-      if (prev > 0 && left <= 0) doBeep();
+    if (prev > 300 && left <= 300 && left > 0) doBeep();
+    if (prev > 0 && left <= 0) doBeep();
 
-      prevRef.current[r.id] = left;
+    prevRef.current[r.id] = left;
 
-      if (left <= 0 && r.status !== 'completed') {
-        const updates: Partial<Infusion> = {
-          status: 'completed',
-          ...(r.notify_email && !r.email_sent_at
-            ? { email_sent_at: new Date().toISOString() }
-            : {})
-        };
+    if (left <= 0 && r.status !== 'completed') {
+      const updates: Partial<Infusion> = {
+        status: 'completed'
+      };
 
-        await supabase.from('infusions').update(updates).eq('id', r.id);
+      if (r.notify_email && !r.email_sent_at) {
+        updates.email_sent_at = new Date().toISOString();
       }
-    });
-  }, [now, running, soundOn]);
+
+      console.log('⏱ Cập nhật infusion:', r.id, updates);
+
+      const { error } = await supabase
+        .from('infusions')
+        .update(updates)
+        .eq('id', r.id)
+        .select();
+
+      if (error) {
+        console.error('❌ Lỗi cập nhật ca:', error.message);
+      }
+    }
+  });
+}, [now, running, soundOn]);
 
   if (!user) {
     return (
