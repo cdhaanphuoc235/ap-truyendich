@@ -12,6 +12,8 @@ const btnSignUp  = document.getElementById("btnSignUp");
 const btnSignOut = document.getElementById("btnSignOut");
 const authMsg    = document.getElementById("authMsg");
 
+const userEmailLbl = document.getElementById("userEmail");
+
 const patientEl = document.getElementById("patient_name");
 const roomEl    = document.getElementById("room");
 const bedEl     = document.getElementById("bed");
@@ -26,6 +28,8 @@ const createMsg = document.getElementById("createMsg");
 
 const runningCount = document.getElementById("runningCount");
 const runningList  = document.getElementById("runningList");
+const btnReloadRunning = document.getElementById("btnReloadRunning");
+
 const historyList  = document.getElementById("historyList");
 const btnReloadHistory = document.getElementById("btnReloadHistory");
 
@@ -35,14 +39,35 @@ const btnCheckPush  = document.getElementById("btnCheckPush");
 const pushState     = document.getElementById("pushState");
 const pushMsg       = document.getElementById("pushMsg");
 
+/* SW update banner */
+const swUpdateBanner = document.getElementById("swUpdateBanner");
+const btnReload      = document.getElementById("btnReload");
+
 let currentUser = null;
 let countdownInterval = null;
 
-/* ---------- PWA SW (đăng ký như cũ) ---------- */
+/* ---------- PWA SW with update prompt ---------- */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    navigator.serviceWorker.register("/sw.js").then(reg => {
+      // Khi có SW mới chờ activate
+      if (reg.waiting) showUpdateBanner(reg);
+      reg.addEventListener("updatefound", () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener("statechange", () => {
+          if (sw.state === "installed" && reg.waiting) showUpdateBanner(reg);
+        });
+      });
+    }).catch(() => {});
   });
+}
+function showUpdateBanner(reg){
+  swUpdateBanner.classList.remove("hidden");
+  btnReload.onclick = () => {
+    reg.waiting?.postMessage({ type: "SKIP_WAITING" });
+    setTimeout(() => location.reload(), 250);
+  };
 }
 
 /* ---------- Auth helpers ---------- */
@@ -62,6 +87,7 @@ async function getUser() {
   const { data } = await supabase.auth.getUser();
   currentUser = data.user ?? null;
   setAuthUI(!!currentUser);
+  if (currentUser) userEmailLbl.textContent = currentUser.email || "-";
   return currentUser;
 }
 
@@ -71,21 +97,16 @@ btnSignIn.onclick = async () => {
   const email = emailEl.value.trim();
   const password = passEl.value;
   const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) authMsg.textContent = `Lỗi: ${error.message}`;
-  else {
-    authMsg.textContent = "Đăng nhập thành công.";
-    await afterLogin();
-  }
+  authMsg.textContent = error ? `Lỗi: ${error.message}` : "Đăng nhập thành công.";
+  if (!error) await afterLogin();
 };
-
 btnSignUp.onclick = async () => {
   authMsg.textContent = "Đang đăng ký...";
   const email = emailEl.value.trim();
   const password = passEl.value;
   const { error } = await supabase.auth.signUp({ email, password });
-  authMsg.textContent = error ? `Lỗi: ${error.message}` : "Đăng ký thành công. Hãy kiểm tra email xác nhận (nếu bật).";
+  authMsg.textContent = error ? `Lỗi: ${error.message}` : "Đăng ký thành công. Kiểm tra email xác nhận (nếu bật).";
 };
-
 btnSignOut.onclick = async () => {
   try { if (window.OneSignal?.logout) await window.OneSignal.logout(); } catch {}
   await supabase.auth.signOut();
@@ -101,10 +122,7 @@ function clearUI() {
   runningCount.textContent = "0";
   pushState.textContent = "Chưa đăng ký.";
   pushMsg.textContent = "";
-  if (countdownInterval) {
-    clearInterval(countdownInterval);
-    countdownInterval = null;
-  }
+  if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
 }
 
 function pad2(n){ return String(n).padStart(2,"0"); }
@@ -115,28 +133,35 @@ function formatHHMMSS(ms) {
   const s = total % 60;
   return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
 }
-function colorByRemaining(ms){
-  if (ms <= 0) return "text-red-700 bg-red-50 border-red-300";
-  if (ms <= 5*60*1000) return "text-yellow-700 bg-yellow-50 border-yellow-300";
-  return "text-sky-700 bg-sky-50 border-sky-300";
+function colorClassByRemaining(ms){
+  if (ms <= 0) return "box-red";
+  if (ms <= 5*60*1000) return "box-yellow";
+  return "box-blue";
 }
+function clamp(v,min,max){ return Math.max(min, Math.min(max,v)); }
 
+/* -------- RUNNING render with progress -------- */
 function renderRunning(items) {
   runningList.innerHTML = "";
   items.forEach((it) => {
-    const end = new Date(it.end_time).getTime();
+    const startMs = new Date(it.start_time).getTime();
+    const endMs   = new Date(it.end_time).getTime();
     const div = document.createElement("div");
     div.className = "border rounded-xl p-3";
-    div.dataset.end = String(end);
+    div.dataset.start = String(startMs);
+    div.dataset.end   = String(endMs);
     div.innerHTML = `
-      <div class="flex items-center justify-between">
-        <div class="font-semibold">${escapeHTML(it.patient_name)}</div>
-        <div class="text-xs text-slate-500">${it.room || ""} ${it.bed || ""}</div>
+      <div class="flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <div class="font-semibold truncate">${escapeHTML(it.patient_name)}</div>
+          <div class="text-xs text-slate-500">${escapeHTML(it.room || "")} ${escapeHTML(it.bed || "")}</div>
+        </div>
+        <div class="text-right text-xs text-slate-500">Kết thúc: ${new Date(it.end_time).toLocaleString()}</div>
       </div>
       <div class="mt-2 border rounded-xl p-3 text-center countdown-box">
         <div class="text-3xl font-bold countdown">--:--:--</div>
-        <div class="text-xs text-slate-500 mt-1">Kết thúc: ${new Date(it.end_time).toLocaleString()}</div>
       </div>
+      <div class="mt-2 progress-wrap"><div class="progress-bar" style="width:0%"></div></div>
     `;
     runningList.appendChild(div);
   });
@@ -150,26 +175,46 @@ function updateCountdowns(){
   const cards = runningList.querySelectorAll("[data-end]");
   const now = Date.now();
   cards.forEach(card => {
-    const end = Number(card.dataset.end);
-    const remain = end - now;
-    const box = card.querySelector(".countdown-box");
-    const label = card.querySelector(".countdown");
+    const start = Number(card.dataset.start);
+    const end   = Number(card.dataset.end);
+    const remain = Math.max(0, end - now);
+    const total  = Math.max(1, end - start);
+    const donePct = clamp(((now - start) / total) * 100, 0, 100);
+    const box  = card.querySelector(".countdown-box");
+    const label= card.querySelector(".countdown");
+    const bar  = card.querySelector(".progress-bar");
     label.textContent = formatHHMMSS(remain);
-    box.className = "mt-2 border rounded-xl p-3 text-center countdown-box " + colorByRemaining(remain);
+    box.className = "mt-2 border rounded-xl p-3 text-center countdown-box " + colorClassByRemaining(remain);
+    if (bar) bar.style.width = `${donePct}%`;
   });
 }
 
+/* -------- HISTORY (with logs) -------- */
 function renderHistory(items){
   historyList.innerHTML = "";
   items.forEach((it) => {
     const row = document.createElement("div");
-    row.className = "flex items-center justify-between border rounded-xl px-3 py-2";
+    row.className = "border rounded-xl p-3";
+    const logs = (it.notifications || []).slice(0, 5); // hiển thị tối đa 5 log gần nhất
     row.innerHTML = `
-      <div>
-        <div class="font-medium">${escapeHTML(it.patient_name)}</div>
-        <div class="text-xs text-slate-500">Kết thúc: ${new Date(it.end_time).toLocaleString()}</div>
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-medium">${escapeHTML(it.patient_name)}</div>
+          <div class="text-xs text-slate-500">Kết thúc: ${new Date(it.end_time).toLocaleString()}</div>
+        </div>
+        <span class="badge bg-slate-100 text-slate-700">${it.status}</span>
       </div>
-      <span class="badge bg-slate-100 text-slate-700">${it.status}</span>
+      <details class="mt-2">
+        <summary class="text-sm text-slate-600 cursor-pointer">Nhật ký thông báo (${logs.length})</summary>
+        <div class="mt-2 grid gap-1">
+          ${logs.map(l => `
+            <div class="text-xs text-slate-600 border rounded px-2 py-1">
+              <b>${escapeHTML(l.channel)}</b> — ${escapeHTML(l.status)} — ${new Date(l.created_at).toLocaleString()}
+              ${l.detail ? `<div class="text-[11px] text-slate-500 mt-1">detail: ${escapeHTML(l.detail)}</div>` : ""}
+            </div>
+          `).join("")}
+        </div>
+      </details>
     `;
     historyList.appendChild(row);
   });
@@ -186,23 +231,22 @@ async function loadRunning() {
   renderRunning(data || []);
 }
 async function loadHistory() {
+  // Dùng view v_history để kéo kèm notifications (Bước 2 đã tạo)
   const { data, error } = await supabase
-    .from("infusions")
-    .select("id, patient_name, end_time, status")
-    .eq("status", "completed")
+    .from("v_history")
+    .select("*")
     .order("end_time", { ascending: false })
-    .limit(20);
-  if (error) console.error(error);
+    .limit(30);
+  if (error) { console.error(error); return; }
   renderHistory(data || []);
 }
+
+btnReloadRunning.onclick = loadRunning;
 btnReloadHistory.onclick = loadHistory;
 
 btnCreate.onclick = async () => {
   createMsg.textContent = "Đang tạo ca...";
-  if (!currentUser) {
-    createMsg.textContent = "Vui lòng đăng nhập trước.";
-    return;
-  }
+  if (!currentUser) { createMsg.textContent = "Vui lòng đăng nhập trước."; return; }
   try {
     const volume_ml    = Number(volEl.value);
     const drops_per_ml = Number(dpmEl.value);
@@ -211,7 +255,6 @@ btnCreate.onclick = async () => {
       createMsg.textContent = "Thiếu hoặc sai dữ liệu bắt buộc.";
       return;
     }
-
     const start = new Date();
     const minutes = Math.ceil((volume_ml * drops_per_ml) / rate_dpm);
     const end = new Date(start.getTime() + minutes * 60 * 1000);
@@ -279,11 +322,10 @@ function escapeHTML(s){ return (s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;',
 /* ---------- After login ---------- */
 async function afterLogin(){
   setAuthUI(true);
+  userEmailLbl.textContent = currentUser?.email || "-";
   await loadRunning();
   await loadHistory();
   setupRealtime();
-
-  // Khởi tạo OneSignal cho user và cập nhật trạng thái push
   await initPushForUser(currentUser);
   await refreshPushState();
 }

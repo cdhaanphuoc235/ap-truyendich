@@ -29,3 +29,9 @@ self.addEventListener("fetch", (e) => {
     }).catch(() => caches.match(req))
   );
 });
+// Hỗ trợ cập nhật thủ công từ UI
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});

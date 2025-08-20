@@ -2,7 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Utilities nhỏ cho app */
-.badge {
-  @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
-}
+/* Badges nhỏ */
+.badge { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium; }
+
+/* Progress bar khung */
+.progress-wrap { @apply w-full h-2 rounded-full bg-slate-100 overflow-hidden; }
+/* Progress bar thanh chạy */
+.progress-bar { @apply h-2 bg-sky-500; transition: width .25s linear; }
+
+/* Banner cập nhật SW */
+.update-banner { @apply fixed bottom-3 inset-x-0 mx-auto w-fit px-3 py-2 rounded-xl shadow bg-amber-100 text-amber-800 border border-amber-300; }
+
+/* Card countdown màu */
+.box-blue   { @apply text-sky-700   bg-sky-50   border-sky-300; }
+.box-yellow { @apply text-yellow-700 bg-yellow-50 border-yellow-300; }
+.box-red    { @apply text-red-700   bg-red-50   border-red-300; }

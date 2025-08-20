@@ -10,14 +10,14 @@
 
     <!-- OneSignal Web SDK v16 -->
     <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
-    <script>
-      // Defer queue theo chuẩn v16
-      window.OneSignalDeferred = window.OneSignalDeferred || [];
-      // Khởi tạo cơ bản: appId lấy từ Vite ENV (set động trong src/onesignal.js)
-      // Thực tế, ta sẽ gọi OneSignal.init() từ mã JS của app sau khi user đăng nhập.
-    </script>
+    <script>window.OneSignalDeferred = window.OneSignalDeferred || [];</script>
   </head>
   <body class="bg-sky-50 text-slate-800">
+    <!-- Banner cập nhật SW (ẩn mặc định) -->
+    <div id="swUpdateBanner" class="update-banner hidden">
+      Có phiên bản mới. <button id="btnReload" class="ml-2 underline">Cập nhật</button>
+    </div>
+
     <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
       <div class="max-w-xl mx-auto px-4 py-3 flex items-center justify-between">
         <h1 class="text-xl font-bold text-sky-600">AP – Truyendich</h1>
@@ -42,22 +42,28 @@
 
       <!-- APP -->
       <section id="appBox" class="hidden space-y-6">
-        <!-- Thông báo đẩy -->
+        <!-- QA & Cài đặt -->
         <div class="bg-white rounded-2xl shadow p-4 space-y-2">
-          <h2 class="font-semibold">Thông báo đẩy</h2>
-          <p id="pushState" class="text-sm text-slate-600">Chưa đăng ký.</p>
-          <div class="flex gap-2">
-            <button id="btnEnablePush" class="flex-1 bg-emerald-600 text-white rounded py-2">Bật thông báo</button>
-            <button id="btnCheckPush" class="flex-1 bg-slate-700 text-white rounded py-2">Kiểm tra trạng thái</button>
+          <h2 class="font-semibold">Cài đặt & Trạng thái</h2>
+          <div class="text-sm text-slate-600">
+            <div>Đăng nhập bằng: <b id="userEmail">-</b></div>
           </div>
-          <p id="pushMsg" class="text-xs text-slate-500"></p>
+          <div class="mt-2">
+            <h3 class="font-medium">Thông báo đẩy</h3>
+            <p id="pushState" class="text-sm text-slate-600">Chưa đăng ký.</p>
+            <div class="flex gap-2 mt-2">
+              <button id="btnEnablePush" class="flex-1 bg-emerald-600 text-white rounded py-2">Bật thông báo</button>
+              <button id="btnCheckPush" class="flex-1 bg-slate-700 text-white rounded py-2">Kiểm tra trạng thái</button>
+            </div>
+            <p id="pushMsg" class="text-xs text-slate-500"></p>
+          </div>
         </div>
 
         <!-- Tạo ca -->
         <div class="bg-white rounded-2xl shadow p-4 space-y-3">
           <h2 class="font-semibold">Tạo ca truyền</h2>
           <div class="grid gap-2">
-            <input id="patient_name" class="border rounded px-3 py-2" placeholder="Bệnh nhân *" />
+            <input id="patient_name" class="border rounded px-3 py-2 text-base" placeholder="Bệnh nhân *" />
             <div class="grid grid-cols-2 gap-2">
               <input id="room" class="border rounded px-3 py-2" placeholder="Phòng" />
               <input id="bed" class="border rounded px-3 py-2" placeholder="Giường" />
@@ -67,13 +73,17 @@
               <input id="drops_per_ml" type="number" class="border rounded px-3 py-2" placeholder="Số giọt/ml *" />
               <input id="rate_dpm" type="number" class="border rounded px-3 py-2" placeholder="Tốc độ (giọt/phút) *" />
             </div>
-            <textarea id="notes" rows="2" class="border rounded px-3 py-2" placeholder="Ghi chú"></textarea>
+            <textarea id="notes" rows="2" class="border rounded px-3 py-2" placeholder="Ghi chú (tùy chọn)"></textarea>
+
             <label class="inline-flex items-center gap-2">
               <input id="wants_email" type="checkbox" />
               <span>Nhận email khi ca kết thúc</span>
             </label>
             <input id="email_to" type="email" class="border rounded px-3 py-2" placeholder="Email nhận (nếu khác tài khoản)" />
-            <button id="btnCreate" class="w-full bg-sky-600 text-white rounded py-3 text-base font-semibold">Bắt đầu truyền</button>
+
+            <button id="btnCreate" class="w-full bg-sky-600 text-white rounded py-3 text-lg font-semibold shadow hover:bg-sky-700">
+              Bắt đầu truyền
+            </button>
             <p id="createMsg" class="text-sm text-slate-500"></p>
           </div>
         </div>
@@ -82,15 +92,18 @@
         <div class="bg-white rounded-2xl shadow p-4">
           <div class="flex items-center justify-between mb-2">
             <h2 class="font-semibold">Đang chạy</h2>
-            <span id="runningCount" class="badge bg-sky-100 text-sky-700">0</span>
+            <div class="flex items-center gap-2">
+              <button id="btnReloadRunning" class="text-sm px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">Tải lại</button>
+              <span id="runningCount" class="badge bg-sky-100 text-sky-700">0</span>
+            </div>
           </div>
           <div id="runningList" class="grid gap-3"></div>
         </div>
 
-        <!-- Lịch sử -->
+        <!-- Lịch sử + Log -->
         <div class="bg-white rounded-2xl shadow p-4">
           <div class="flex items-center justify-between mb-2">
-            <h2 class="font-semibold">Lịch sử</h2>
+            <h2 class="font-semibold">Lịch sử (kèm nhật ký)</h2>
             <button id="btnReloadHistory" class="text-sm px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">Tải lại</button>
           </div>
           <div id="historyList" class="grid gap-2"></div>
