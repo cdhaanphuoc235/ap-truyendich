@@ -7,6 +7,15 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>AP - Truyendich</title>
     <link rel="stylesheet" href="/src/style.css" />
+
+    <!-- OneSignal Web SDK v16 -->
+    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+    <script>
+      // Defer queue theo chuẩn v16
+      window.OneSignalDeferred = window.OneSignalDeferred || [];
+      // Khởi tạo cơ bản: appId lấy từ Vite ENV (set động trong src/onesignal.js)
+      // Thực tế, ta sẽ gọi OneSignal.init() từ mã JS của app sau khi user đăng nhập.
+    </script>
   </head>
   <body class="bg-sky-50 text-slate-800">
     <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
@@ -33,6 +42,17 @@
 
       <!-- APP -->
       <section id="appBox" class="hidden space-y-6">
+        <!-- Thông báo đẩy -->
+        <div class="bg-white rounded-2xl shadow p-4 space-y-2">
+          <h2 class="font-semibold">Thông báo đẩy</h2>
+          <p id="pushState" class="text-sm text-slate-600">Chưa đăng ký.</p>
+          <div class="flex gap-2">
+            <button id="btnEnablePush" class="flex-1 bg-emerald-600 text-white rounded py-2">Bật thông báo</button>
+            <button id="btnCheckPush" class="flex-1 bg-slate-700 text-white rounded py-2">Kiểm tra trạng thái</button>
+          </div>
+          <p id="pushMsg" class="text-xs text-slate-500"></p>
+        </div>
+
         <!-- Tạo ca -->
         <div class="bg-white rounded-2xl shadow p-4 space-y-3">
           <h2 class="font-semibold">Tạo ca truyền</h2>
@@ -67,7 +87,7 @@
           <div id="runningList" class="grid gap-3"></div>
         </div>
 
-        <!-- Lịch sử (đơn giản) -->
+        <!-- Lịch sử -->
         <div class="bg-white rounded-2xl shadow p-4">
           <div class="flex items-center justify-between mb-2">
             <h2 class="font-semibold">Lịch sử</h2>

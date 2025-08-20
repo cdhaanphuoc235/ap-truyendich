@@ -1,3 +1,7 @@
+// OneSignal v16 in existing Service Worker
+importScripts("https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js");
+
+// ==== PWA cache (giữ nguyên logic cũ, bạn có thể tinh chỉnh sau) ====
 const CACHE = "td-cache-v1";
 const ASSETS = ["/", "/index.html", "/manifest.webmanifest"];
 

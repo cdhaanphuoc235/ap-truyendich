@@ -1,4 +1,5 @@
 import { supabase } from "./supabase.js";
+import { initPushForUser, requestPushPermissionAndSave, checkPushState } from "./onesignal.js";
 
 /* ---------- DOM refs ---------- */
 const authBox = document.getElementById("authBox");
@@ -28,10 +29,16 @@ const runningList  = document.getElementById("runningList");
 const historyList  = document.getElementById("historyList");
 const btnReloadHistory = document.getElementById("btnReloadHistory");
 
+/* Push UI */
+const btnEnablePush = document.getElementById("btnEnablePush");
+const btnCheckPush  = document.getElementById("btnCheckPush");
+const pushState     = document.getElementById("pushState");
+const pushMsg       = document.getElementById("pushMsg");
+
 let currentUser = null;
 let countdownInterval = null;
 
-/* ---------- PWA: register SW ---------- */
+/* ---------- PWA SW (đăng ký như cũ) ---------- */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").catch(() => {});
@@ -63,7 +70,7 @@ btnSignIn.onclick = async () => {
   authMsg.textContent = "Đang đăng nhập...";
   const email = emailEl.value.trim();
   const password = passEl.value;
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) authMsg.textContent = `Lỗi: ${error.message}`;
   else {
     authMsg.textContent = "Đăng nhập thành công.";
@@ -75,12 +82,12 @@ btnSignUp.onclick = async () => {
   authMsg.textContent = "Đang đăng ký...";
   const email = emailEl.value.trim();
   const password = passEl.value;
-  const { data, error } = await supabase.auth.signUp({ email, password });
-  if (error) authMsg.textContent = `Lỗi: ${error.message}`;
-  else authMsg.textContent = "Đăng ký thành công. Nếu bật email confirm, hãy kiểm tra hộp thư.";
+  const { error } = await supabase.auth.signUp({ email, password });
+  authMsg.textContent = error ? `Lỗi: ${error.message}` : "Đăng ký thành công. Hãy kiểm tra email xác nhận (nếu bật).";
 };
 
 btnSignOut.onclick = async () => {
+  try { if (window.OneSignal?.logout) await window.OneSignal.logout(); } catch {}
   await supabase.auth.signOut();
   currentUser = null;
   setAuthUI(false);
@@ -92,6 +99,8 @@ function clearUI() {
   runningList.innerHTML = "";
   historyList.innerHTML = "";
   runningCount.textContent = "0";
+  pushState.textContent = "Chưa đăng ký.";
+  pushMsg.textContent = "";
   if (countdownInterval) {
     clearInterval(countdownInterval);
     countdownInterval = null;
@@ -106,7 +115,6 @@ function formatHHMMSS(ms) {
   const s = total % 60;
   return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
 }
-
 function colorByRemaining(ms){
   if (ms <= 0) return "text-red-700 bg-red-50 border-red-300";
   if (ms <= 5*60*1000) return "text-yellow-700 bg-yellow-50 border-yellow-300";
@@ -133,7 +141,6 @@ function renderRunning(items) {
     runningList.appendChild(div);
   });
   runningCount.textContent = String(items.length);
-
   if (countdownInterval) clearInterval(countdownInterval);
   countdownInterval = setInterval(updateCountdowns, 1000);
   updateCountdowns();
@@ -148,7 +155,6 @@ function updateCountdowns(){
     const box = card.querySelector(".countdown-box");
     const label = card.querySelector(".countdown");
     label.textContent = formatHHMMSS(remain);
-    // reset color classes
     box.className = "mt-2 border rounded-xl p-3 text-center countdown-box " + colorByRemaining(remain);
   });
 }
@@ -179,7 +185,6 @@ async function loadRunning() {
   if (error) console.error(error);
   renderRunning(data || []);
 }
-
 async function loadHistory() {
   const { data, error } = await supabase
     .from("infusions")
@@ -190,7 +195,6 @@ async function loadHistory() {
   if (error) console.error(error);
   renderHistory(data || []);
 }
-
 btnReloadHistory.onclick = loadHistory;
 
 btnCreate.onclick = async () => {
@@ -208,7 +212,7 @@ btnCreate.onclick = async () => {
       return;
     }
 
-    const start = new Date(); // local → Supabase là timestamptz
+    const start = new Date();
     const minutes = Math.ceil((volume_ml * drops_per_ml) / rate_dpm);
     const end = new Date(start.getTime() + minutes * 60 * 1000);
 
@@ -219,18 +223,15 @@ btnCreate.onclick = async () => {
       bed: bedEl.value.trim() || null,
       volume_ml, drops_per_ml, rate_dpm,
       start_time: start.toISOString(),
-      end_time: end.toISOString(), // server cũng có trigger tính nếu thiếu
+      end_time: end.toISOString(),
       notes: notesEl.value.trim() || null,
       wants_email: !!wantsMail.checked,
       email_to: emailToEl.value.trim() || null
     };
-
-    const { data, error } = await supabase.from("infusions").insert(payload).select().single();
+    const { error } = await supabase.from("infusions").insert(payload);
     if (error) throw error;
 
     createMsg.textContent = "Đã tạo ca truyền.";
-    // Clear form nhẹ
-    // (giữ lại room/bed nếu bạn muốn)
     volEl.value = ""; dpmEl.value = ""; rateEl.value = "";
     notesEl.value = ""; wantsMail.checked = false; emailToEl.value = "";
     await loadRunning();
@@ -240,16 +241,35 @@ btnCreate.onclick = async () => {
   }
 };
 
-/* ---------- Realtime: cập nhật live ---------- */
+/* ---------- Push UI handlers ---------- */
+btnEnablePush.onclick = async () => {
+  if (!currentUser) { pushMsg.textContent = "Vui lòng đăng nhập."; return; }
+  pushMsg.textContent = "Đang yêu cầu quyền...";
+  const res = await requestPushPermissionAndSave(currentUser);
+  pushMsg.textContent = res.message || "";
+  await refreshPushState();
+};
+btnCheckPush.onclick = async () => { await refreshPushState(); };
+
+async function refreshPushState(){
+  try {
+    const st = await checkPushState();
+    if (!st.ok) { pushState.textContent = st.message || "Không xác định"; return; }
+    pushState.textContent = (st.perm ? "ĐÃ CẤP QUYỀN" : "CHƯA CẤP QUYỀN") +
+      (st.optedIn ? " | ĐÃ ĐĂNG KÝ" : " | CHƯA ĐĂNG KÝ") +
+      (st.subId ? ` | ID: ${st.subId}` : "");
+  } catch (e) {
+    pushState.textContent = e?.message || "Lỗi trạng thái";
+  }
+}
+
+/* ---------- Realtime ---------- */
 function setupRealtime() {
   if (!currentUser) return;
   supabase.channel("infusions-change")
     .on("postgres_changes",
       { event: "*", schema: "public", table: "infusions", filter: `user_id=eq.${currentUser.id}` },
-      async (payload) => {
-        await loadRunning();
-        await loadHistory();
-      }
+      async () => { await loadRunning(); await loadHistory(); }
     ).subscribe();
 }
 
@@ -262,6 +282,10 @@ async function afterLogin(){
   await loadRunning();
   await loadHistory();
   setupRealtime();
+
+  // Khởi tạo OneSignal cho user và cập nhật trạng thái push
+  await initPushForUser(currentUser);
+  await refreshPushState();
 }
 
 /* ---------- Boot ---------- */
