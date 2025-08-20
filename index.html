@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0ea5e9" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>AP - Truyendich</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body class="bg-sky-50 text-slate-800">
+    <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
+      <div class="max-w-xl mx-auto px-4 py-3 flex items-center justify-between">
+        <h1 class="text-xl font-bold text-sky-600">AP – Truyendich</h1>
+        <button id="btnSignOut" class="hidden text-sm px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Đăng xuất</button>
+      </div>
+    </header>
+
+    <main class="max-w-xl mx-auto px-4 py-4 space-y-6">
+      <!-- AUTH -->
+      <section id="authBox" class="bg-white rounded-2xl shadow p-4 space-y-3">
+        <h2 class="font-semibold">Đăng nhập / Đăng ký</h2>
+        <div class="grid gap-2">
+          <input id="email" type="email" placeholder="Email" class="border rounded px-3 py-2" />
+          <input id="password" type="password" placeholder="Mật khẩu (>=6 ký tự)" class="border rounded px-3 py-2" />
+          <div class="flex gap-2">
+            <button id="btnSignIn" class="flex-1 bg-sky-600 text-white rounded py-2">Đăng nhập</button>
+            <button id="btnSignUp" class="flex-1 bg-slate-800 text-white rounded py-2">Đăng ký</button>
+          </div>
+          <p id="authMsg" class="text-sm text-slate-500"></p>
+        </div>
+      </section>
+
+      <!-- APP -->
+      <section id="appBox" class="hidden space-y-6">
+        <!-- Tạo ca -->
+        <div class="bg-white rounded-2xl shadow p-4 space-y-3">
+          <h2 class="font-semibold">Tạo ca truyền</h2>
+          <div class="grid gap-2">
+            <input id="patient_name" class="border rounded px-3 py-2" placeholder="Bệnh nhân *" />
+            <div class="grid grid-cols-2 gap-2">
+              <input id="room" class="border rounded px-3 py-2" placeholder="Phòng" />
+              <input id="bed" class="border rounded px-3 py-2" placeholder="Giường" />
+            </div>
+            <div class="grid grid-cols-3 gap-2">
+              <input id="volume_ml" type="number" class="border rounded px-3 py-2" placeholder="Thể tích (ml) *" />
+              <input id="drops_per_ml" type="number" class="border rounded px-3 py-2" placeholder="Số giọt/ml *" />
+              <input id="rate_dpm" type="number" class="border rounded px-3 py-2" placeholder="Tốc độ (giọt/phút) *" />
+            </div>
+            <textarea id="notes" rows="2" class="border rounded px-3 py-2" placeholder="Ghi chú"></textarea>
+            <label class="inline-flex items-center gap-2">
+              <input id="wants_email" type="checkbox" />
+              <span>Nhận email khi ca kết thúc</span>
+            </label>
+            <input id="email_to" type="email" class="border rounded px-3 py-2" placeholder="Email nhận (nếu khác tài khoản)" />
+            <button id="btnCreate" class="w-full bg-sky-600 text-white rounded py-3 text-base font-semibold">Bắt đầu truyền</button>
+            <p id="createMsg" class="text-sm text-slate-500"></p>
+          </div>
+        </div>
+
+        <!-- Đang chạy -->
+        <div class="bg-white rounded-2xl shadow p-4">
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="font-semibold">Đang chạy</h2>
+            <span id="runningCount" class="badge bg-sky-100 text-sky-700">0</span>
+          </div>
+          <div id="runningList" class="grid gap-3"></div>
+        </div>
+
+        <!-- Lịch sử (đơn giản) -->
+        <div class="bg-white rounded-2xl shadow p-4">
+          <div class="flex items-center justify-between mb-2">
+            <h2 class="font-semibold">Lịch sử</h2>
+            <button id="btnReloadHistory" class="text-sm px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">Tải lại</button>
+          </div>
+          <div id="historyList" class="grid gap-2"></div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
