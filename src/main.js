@@ -1,22 +1,41 @@
 // ========= Styles (Tailwind built by Vite) =========
 import "./style.css";
 
+// ========= Env validation =========
+const VITE_URL = import.meta.env.VITE_SUPABASE_URL;
+const VITE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+function fatal(msg) {
+  console.error(msg);
+  const root = document.querySelector("main") || document.body;
+  const bar = document.createElement("div");
+  bar.className = "p-3 rounded-xl bg-red-100 text-red-700 border border-red-300 mb-3";
+  bar.textContent = msg;
+  root.prepend(bar);
+}
+
+if (!VITE_URL || !VITE_ANON) {
+  fatal("Thiếu ENV: VITE_SUPABASE_URL hoặc VITE_SUPABASE_ANON_KEY (Netlify). App sẽ không hoạt động.");
+}
+
 // ========= Libs =========
 import { createClient } from "@supabase/supabase-js";
-// Nếu bạn đã có file onesignal.js từ trước, giữ lại import dưới.
-// Nếu chưa, có thể tạm comment 3 dòng import và bỏ các tính năng push.
-import {
-  initPushForUser,
-  requestPushPermissionAndSave,
-  checkPushState,
-} from "./onesignal.js";
 
-// ========= Supabase client =========
-// Yêu cầu bạn đã set VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY trong Netlify
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+let supabase = null;
+if (VITE_URL && VITE_ANON) {
+  supabase = createClient(VITE_URL, VITE_ANON);
+}
+
+// (Có thể comment nếu bạn chưa cập nhật onesignal.js)
+let initPushForUser, requestPushPermissionAndSave, checkPushState;
+try {
+  const mod = await import("./onesignal.js");
+  initPushForUser = mod.initPushForUser;
+  requestPushPermissionAndSave = mod.requestPushPermissionAndSave;
+  checkPushState = mod.checkPushState;
+} catch (e) {
+  console.warn("OneSignal module not loaded:", e?.message || e);
+}
 
 // ========= Beep in foreground =========
 const alertAudio = new Audio("/sounds/beep.mp3");
@@ -32,6 +51,7 @@ function tryBeep() {
 
 // ========= Helpers =========
 const $ = (id) => document.getElementById(id);
+function on(el, ev, fn){ if (el) el.addEventListener(ev, fn); }
 
 function fmt(ms) {
   const s = Math.floor(ms / 1000);
@@ -47,69 +67,78 @@ function colorByRemain(remainMs) {
   return "border-sky-500";
 }
 function minutesFromFormula(volume, dropsPerMl, rateDropPerMin) {
-  // phút = (ml * giọt/ml) / (giọt/phút)
   if (!rateDropPerMin) return 0;
   return (Number(volume) * Number(dropsPerMl)) / Number(rateDropPerMin);
 }
 
 // ========= Auth UI =========
 async function refreshAuthUI() {
+  if (!supabase) return;
   const { data } = await supabase.auth.getUser();
   const user = data.user;
+  const btnGoogle = $("#btnGoogle");
+  const btnLogout = $("#btnLogout");
+  const info = $("#authInfo");
   if (user) {
-    $("#btnGoogle").classList.add("hidden");
-    $("#btnLogout").classList.remove("hidden");
-    $("#authInfo").textContent = `Đăng nhập: ${user.email}`;
-    // init OneSignal cho user
-    try { await initPushForUser({ id: user.id }); } catch {}
+    btnGoogle && btnGoogle.classList.add("hidden");
+    btnLogout && btnLogout.classList.remove("hidden");
+    info && (info.textContent = `Đăng nhập: ${user.email}`);
+    try { initPushForUser && (await initPushForUser({ id: user.id })); } catch {}
   } else {
-    $("#btnLogout").classList.add("hidden");
-    $("#btnGoogle").classList.remove("hidden");
-    $("#authInfo").textContent = "Chưa đăng nhập.";
+    btnLogout && btnLogout.classList.add("hidden");
+    btnGoogle && btnGoogle.classList.remove("hidden");
+    info && (info.textContent = "Chưa đăng nhập.");
   }
 }
-$("#btnGoogle").addEventListener("click", async () => {
+
+on($("#btnGoogle"), "click", async () => {
+  if (!supabase) return;
   await supabase.auth.signInWithOAuth({
     provider: "google",
     options: { redirectTo: window.location.origin },
   });
 });
-$("#btnLogout").addEventListener("click", async () => {
+on($("#btnLogout"), "click", async () => {
+  if (!supabase) return;
   await supabase.auth.signOut();
   await refreshAuthUI();
 });
 
-supabase.auth.onAuthStateChange((_e, _s) => refreshAuthUI());
+supabase && supabase.auth.onAuthStateChange((_e, _s) => refreshAuthUI());
 refreshAuthUI();
 
 // ========= Push buttons =========
-$("#btnEnablePush").addEventListener("click", async () => {
+on($("#btnEnablePush"), "click", async () => {
+  if (!requestPushPermissionAndSave) return fatal("Push SDK chưa sẵn sàng.");
   const res = await requestPushPermissionAndSave();
-  $("#pushState").textContent = res.ok ? res.message : `Lỗi: ${res.message}`;
+  const p = $("#pushState"); if (p) p.textContent = res.ok ? res.message : `Lỗi: ${res.message}`;
 });
-$("#btnCheckPush").addEventListener("click", async () => {
+on($("#btnCheckPush"), "click", async () => {
+  if (!checkPushState) return fatal("Push SDK chưa sẵn sàng.");
   const res = await checkPushState();
-  $("#pushState").textContent = res.ok
-    ? `perm=${res.perm}, optedIn=${res.optedIn}, id=${res.subId || "-"}`
-    : `Lỗi: ${res.message}`;
+  const p = $("#pushState"); if (p) p.textContent = res.ok
+      ? `perm=${res.perm}, optedIn=${res.optedIn}, id=${res.subId || "-"}`
+      : `Lỗi: ${res.message}`;
 });
 
 // ========= Create infusion =========
-$("#createForm").addEventListener("submit", async (e) => {
+on($("#createForm"), "submit", async (e) => {
   e.preventDefault();
+  if (!supabase) return fatal("Supabase client chưa sẵn sàng (thiếu ENV).");
+
   const { data } = await supabase.auth.getUser();
   const user = data.user;
   if (!user) return alert("Hãy đăng nhập Google trước.");
 
-  const patient_name = $("#patient_name").value.trim();
-  const room = $("#room").value.trim();
-  const bed = $("#bed").value.trim();
-  const volume_ml = Number($("#volume_ml").value);
-  const drop_per_ml = Number($("#drop_per_ml").value);
-  const rate_drop_per_min = Number($("#rate_drop_per_min").value);
-  const note = $("#note").value.trim();
-  const email_notify = $("#email_notify").checked;
-  const email_to = ($("#email_to").value || user.email || "").trim();
+  const patient_name = $("#patient_name")?.value.trim();
+  const room = $("#room")?.value.trim();
+  const bed = $("#bed")?.value.trim();
+  const volume_ml = Number($("#volume_ml")?.value);
+  const drop_per_ml = Number($("#drop_per_ml")?.value);
+  const rate_drop_per_min = Number($("#rate_drop_per_min")?.value);
+  const note = $("#note")?.value.trim();
+  const email_notify = $("#email_notify")?.checked;
+  const email_to = (($("#email_to")?.value || user.email || "").trim());
 
   if (!patient_name || !volume_ml || !drop_per_ml || !rate_drop_per_min) {
     return alert("Điền đầy đủ các trường bắt buộc.");
@@ -131,9 +160,10 @@ $("#createForm").addEventListener("submit", async (e) => {
     status: "running",
   });
 
-  $("#createMsg").textContent = error ? `Lỗi: ${error.message}` : "Đã bắt đầu truyền.";
+  const msgEl = $("#createMsg");
+  if (msgEl) msgEl.textContent = error ? `Lỗi: ${error.message}` : "Đã bắt đầu truyền.";
   if (!error) {
-    $("#createForm").reset();
+    $("#createForm")?.reset();
     await loadRunning();
   }
 });
@@ -143,6 +173,7 @@ let runningCache = [];
 
 function renderRunning(list) {
   const wrap = $("#runningList");
+  if (!wrap) return;
   wrap.innerHTML = "";
   for (const it of list) {
     const remain = Math.max(0, new Date(it.end_time) - Date.now());
@@ -165,6 +196,7 @@ function renderRunning(list) {
 
 function renderHistory(list) {
   const wrap = $("#historyList");
+  if (!wrap) return;
   wrap.innerHTML = "";
   for (const it of list) {
     const item = document.createElement("div");
@@ -184,6 +216,7 @@ function renderHistory(list) {
 }
 
 async function loadRunning() {
+  if (!supabase) return;
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return;
   const { data, error } = await supabase
@@ -198,9 +231,9 @@ async function loadRunning() {
 }
 
 async function loadHistory() {
+  if (!supabase) return;
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return;
-  // Nếu bạn có view v_history thì thay bằng from("v_history")
   const { data, error } = await supabase
     .from("infusions")
     .select("id,patient_name,room,bed,end_time,push_sent,email_sent,status")
@@ -212,10 +245,11 @@ async function loadHistory() {
   renderHistory(data || []);
 }
 
-$("#btnReloadRunning").addEventListener("click", loadRunning);
-$("#btnReloadHistory").addEventListener("click", loadHistory);
+on($("#btnReloadRunning"), "click", loadRunning);
+on($("#btnReloadHistory"), "click", loadHistory);
 
-$("#btnClearHistory").addEventListener("click", async () => {
+on($("#btnClearHistory"), "click", async () => {
+  if (!supabase) return;
   if (!confirm("Xoá toàn bộ lịch sử của bạn?")) return;
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return alert("Bạn chưa đăng nhập.");
@@ -248,6 +282,3 @@ setInterval(() => {
 // ========= First load =========
 loadRunning();
 loadHistory();
-
-// ========= Minimal Tailwind components (via CSS classes) =========
-// (Các class .input, .btn-primary, .btn-outline, .card, .tag đã định nghĩa trong src/style.css)
