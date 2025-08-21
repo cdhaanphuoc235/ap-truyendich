@@ -1,3 +1,17 @@
+import "./style.css";
+// Âm thanh thông báo foreground
+const alertAudio = new Audio("/sounds/beep.mp3");
+alertAudio.preload = "auto";
+let userInteracted = false;
+window.addEventListener("pointerdown", () => { userInteracted = true; }, { once: true });
+
+function tryBeep() {
+  // Chỉ phát nếu user đã tương tác để tránh bị chặn
+  if (!userInteracted) return;
+  alertAudio.currentTime = 0;
+  alertAudio.play().catch(() => {});
+  if (navigator.vibrate) navigator.vibrate([120, 60, 120]); // rung nhẹ
+}
 import { supabase } from "./supabase.js";
 import { initPushForUser, requestPushPermissionAndSave, checkPushState } from "./onesignal.js";
 
@@ -205,6 +219,11 @@ function updateCountdowns(){
     const start = Number(card.dataset.start);
     const end   = Number(card.dataset.end);
     const remain = Math.max(0, end - now);
+    const prevRemain = Number(card.dataset.prevRemain || "999999");
+    if (prevRemain > 0 && remain === 0) {
+    tryBeep();
+}
+card.dataset.prevRemain = String(remain);
     const box  = card.querySelector(".countdown-box");
     const label= card.querySelector(".countdown");
     label.textContent = formatHHMMSS(remain);

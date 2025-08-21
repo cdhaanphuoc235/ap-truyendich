@@ -1,90 +1,82 @@
-import { supabase } from "./supabase.js";
+// src/onesignal.js — SDK v16 chuẩn, đợi init trước khi gọi API
 
 const APP_ID = import.meta.env.VITE_ONESIGNAL_APP_ID;
 
-/**
- * Khởi tạo OneSignal sau khi user đã đăng nhập.
- * - Đăng nhập OneSignal bằng externalId = user.id (không bật identity verification thì OK).
- * - Xin quyền, lấy Subscription ID, lưu vào Supabase (push_subscriptions).
- */
-export async function initPushForUser(user) {
-  if (!APP_ID) {
-    console.warn("Missing VITE_ONESIGNAL_APP_ID");
-    return { ok: false, message: "Thiếu OneSignal App ID" };
-  }
-  if (!user) return { ok: false, message: "Chưa có user" };
-
-  // Tạo deferred queue theo chuẩn v16
-  window.OneSignalDeferred = window.OneSignalDeferred || [];
-  window.OneSignalDeferred.push(async function (OneSignal) {
-    // Init SDK
-    await OneSignal.init({
-      appId: APP_ID,
-      allowLocalhostAsSecureOrigin: true, // cho dev localhost
-      notifyButton: { enable: false },
-      // Nếu bạn muốn custom SW path/scope, có thể dùng:
-      // serviceWorkerParam: { scope: "/push/onesignal/" },
-      // serviceWorkerPath: "/push/onesignal/OneSignalSDKWorker.js",
-    });
-
-    // Gắn externalId = user.id để thống nhất danh tính đa thiết bị
-    try { await OneSignal.login(user.id); } catch (e) { console.debug("login skip:", e?.message); }
-
-    // Event thay đổi subscription => lưu DB
-    OneSignal.User.PushSubscription.addEventListener("change", async (ev) => {
+function waitSdkReady() {
+  return new Promise((resolve) => {
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    window.OneSignalDeferred.push(async (OneSignal) => {
       try {
-        const subId = await OneSignal.User.PushSubscription.getId();
-        const optedIn = await OneSignal.User.PushSubscription.optedIn;
-        if (!optedIn || !subId) return;
-
-        await saveSubscriptionToDB(user.id, subId, "web");
-        console.log("Saved OneSignal subId:", subId);
+        if (!OneSignal.initialized) {
+          await OneSignal.init({
+            appId: APP_ID,
+            safari_web_id: undefined,     // nếu có
+            allowLocalhostAsSecureOrigin: true, // tiện dev
+          });
+try {
+  OneSignal.Notifications.addEventListener("notificationDisplay", () => {
+    // Phát beep nếu user đang ở trong app
+    try {
+      const a = new Audio("/sounds/beep.mp3");
+      a.play().catch(()=>{});
+    } catch {}
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+  });
+} catch {}
+        }
+        resolve(OneSignal);
       } catch (e) {
-        console.warn("Save subscription failed:", e?.message || e);
+        console.error("OneSignal init error", e);
+        resolve(null);
       }
     });
   });
-
-  return { ok: true };
 }
 
-export async function requestPushPermissionAndSave(user) {
-  if (!user) return { ok: false, message: "Chưa đăng nhập" };
-  const OneSignal = window.OneSignal || window.OneSignalDeferred;
-  if (!OneSignal) return { ok: false, message: "OneSignal chưa sẵn sàng" };
-
-  // Gọi theo v16
+/** Gán userId vào OneSignal (để cron target theo external_id) */
+export async function initPushForUser(user) {
+  const OneSignal = await waitSdkReady();
+  if (!OneSignal || !user?.id) return { ok:false, message:"SDK chưa sẵn sàng" };
   try {
-    const permission = await window.OneSignal.Notifications.requestPermission();
-    // Nếu được cấp, lấy ID và lưu
-    const subId = await window.OneSignal.User.PushSubscription.getId();
-    const optedIn = await window.OneSignal.User.PushSubscription.optedIn;
-    if (permission === "granted" && optedIn && subId) {
-      await saveSubscriptionToDB(user.id, subId, "web");
-      return { ok: true, message: "Đã bật thông báo.", subId };
-    } else {
-      return { ok: false, message: "Người dùng chưa cho phép hoặc chưa có Subscription ID." };
-    }
+    await OneSignal.login(user.id); // v16
+    return { ok:true };
   } catch (e) {
-    return { ok: false, message: e?.message || String(e) };
+    console.error(e);
+    return { ok:false, message:String(e?.message || e) };
+  }
+}
+
+/** Xin quyền + subscribe, lưu playerId vào DB nếu muốn (tùy chọn) */
+export async function requestPushPermissionAndSave(user) {
+  const OneSignal = await waitSdkReady();
+  if (!OneSignal) return { ok:false, message:"SDK chưa sẵn sàng" };
+  try {
+    const perm = await OneSignal.Notifications.requestPermission(); // 'granted' | 'denied' | 'default'
+    if (perm !== 'granted') return { ok:false, message:"Bạn chưa cấp quyền thông báo" };
+
+    // v16: get subscription id qua User.PushSubscription.getId()
+    const subId = await OneSignal.User.PushSubscription.getId();
+    // (Tùy chọn) ghi vào bảng push_subscriptions nếu cần
+    // await supabase.from("push_subscriptions").insert({ user_id: user.id, onesignal_player_id: subId, platform: 'web' });
+
+    return { ok:true, message:"Đã bật thông báo", subId };
+  } catch (e) {
+    console.error(e);
+    return { ok:false, message:String(e?.message || e) };
   }
 }
 
 export async function checkPushState() {
+  const OneSignal = await waitSdkReady();
+  if (!OneSignal) return { ok:false, message:"SDK chưa sẵn sàng" };
   try {
-    const perm = await window.OneSignal.Notifications.permission; // boolean theo v16 docs
-    const subId = await window.OneSignal.User.PushSubscription.getId();
-    const optedIn = await window.OneSignal.User.PushSubscription.optedIn;
-    return { ok: true, perm, optedIn, subId };
+    const perm = await OneSignal.Notifications.getPermissionStatus(); // 'granted' | ...
+    let subId = null;
+    try { subId = await OneSignal.User.PushSubscription.getId(); } catch {}
+    const optedIn = !!subId;
+    return { ok:true, perm: perm === 'granted', optedIn, subId, message: "" };
   } catch (e) {
-    return { ok: false, message: e?.message || String(e) };
+    console.error(e);
+    return { ok:false, message:String(e?.message || e) };
   }
-}
-
-async function saveSubscriptionToDB(user_id, onesignal_player_id, platform) {
-  // upsert để tránh trùng unique (user_id, onesignal_player_id)
-  const { error } = await supabase
-    .from("push_subscriptions")
-    .upsert({ user_id, onesignal_player_id, platform }, { onConflict: "user_id,onesignal_player_id" });
-  if (error) throw error;
 }
