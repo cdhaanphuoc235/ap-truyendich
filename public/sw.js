@@ -1,3 +1,4 @@
+// OneSignal SW loader (v16)
 importScripts('https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js');
 
 self.addEventListener("message", (e) => {
@@ -11,11 +12,10 @@ self.addEventListener("install", (evt) => {
   evt.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(ASSETS)).catch(()=>{}).then(()=>self.skipWaiting()));
 });
 self.addEventListener("activate", (evt) => {
-  evt.waitUntil(
-    caches.keys().then(keys => Promise.all(keys.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k))))
-      .then(()=>self.clients.claim())
-  );
+  evt.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k)))) .then(()=>self.clients.claim()));
 });
+
+// Chỉ cache GET để tránh lỗi Cache.put POST
 self.addEventListener("fetch", (evt) => {
   const req = evt.request;
   if (req.method !== "GET") return;

@@ -11,7 +11,7 @@ export function oneSignalReady() {
           await OS.init({ appId: APP_ID, allowLocalhostAsSecureOrigin: true });
           try {
             OS.Notifications.addEventListener("notificationDisplay", () => {
-              try { const a = new Audio("/sounds/beep.mp3"); a.play().catch(()=>{}); } catch {}
+              try { new Audio("/sounds/beep.mp3").play().catch(()=>{}); } catch {}
               if (navigator.vibrate) navigator.vibrate([100,50,100]);
             });
           } catch {}
@@ -32,7 +32,6 @@ export async function initPushForUser(user) {
   try { await OS.login(user.id); return { ok:true }; }
   catch(e){ return { ok:false, message:String(e?.message||e) }; }
 }
-
 export async function requestPushPermissionAndSave() {
   const OS = await oneSignalReady();
   if (!OS) return { ok:false, message:"SDK chưa sẵn sàng" };
@@ -43,7 +42,6 @@ export async function requestPushPermissionAndSave() {
     return { ok:true, message:"Đã bật thông báo", subId };
   } catch(e){ return { ok:false, message:String(e?.message||e) }; }
 }
-
 export async function checkPushState() {
   const OS = await oneSignalReady();
   if (!OS) return { ok:false, message:"SDK chưa sẵn sàng" };

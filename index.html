@@ -1,136 +1,96 @@
 <!doctype html>
 <html lang="vi">
   <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#0ea5e9" />
-  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
-  <link rel="apple-touch-icon" href="/icons/icon-192.png">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="manifest" href="/manifest.webmanifest" />
-  <title>AP - Truyendich</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0ea5e9" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>AP – Truyendich</title>
 
-  <!-- OneSignal Web SDK v16 -->
-  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
-  <script>window.OneSignalDeferred = window.OneSignalDeferred || [];</script>
-</head>
-  <body class="bg-sky-50 text-slate-800">
-    <!-- Banners -->
-    <div id="installBanner" class="install-banner hidden">
-      <span>Cài đặt ứng dụng để nhận nhắc ngay cả khi đóng.</span>
-      <button id="btnInstall" class="btn">Cài đặt</button>
-    </div>
-    <div id="swUpdateBanner" class="update-banner hidden">
-      <span>Có phiên bản mới.</span>
-      <button id="btnReload" class="btn">Cập nhật</button>
-    </div>
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
 
-    <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
-      <div class="max-w-xl mx-auto px-4 py-3 flex items-center justify-between">
-        <h1 class="h-title">AP – Truyendich</h1>
-        <button id="btnSignOut" class="hidden btn">Đăng xuất</button>
-      </div>
-    </header>
+    <!-- OneSignal v16 SDK (defer) -->
+    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+    <script>window.OneSignalDeferred = window.OneSignalDeferred || [];</script>
+  </head>
+  <body class="bg-white text-gray-900">
+    <main class="max-w-xl mx-auto px-3 py-4">
+      <h1 class="text-2xl font-extrabold tracking-tight mb-3">AP – Truyendich</h1>
 
-    <main class="max-w-xl mx-auto px-4 py-4 space-y-6">
-      <!-- AUTH -->
-      <section id="authBox" class="card space-y-3">
-        <h2 class="font-semibold">Đăng nhập / Đăng ký</h2>
-        <div class="grid gap-2">
-          <label class="label" for="email">Email</label>
-          <input id="email" type="email" class="input" placeholder="you@hospital.vn" autocomplete="email" />
-
-          <label class="label" for="password">Mật khẩu</label>
-          <input id="password" type="password" class="input" placeholder="≥ 6 ký tự" autocomplete="current-password" />
-
-          <div class="flex gap-2 mt-2">
-            <button id="btnSignIn" class="btn-primary">Đăng nhập</button>
-          </div>
-          <div class="flex gap-2">
-            <button id="btnSignUp" class="btn w-full">Đăng ký</button>
-            <button id="btnGoogle" class="btn w-full">🔐 Google</button>
-          </div>
-
-          <p id="authMsg" class="small"></p>
+      <!-- Đăng nhập -->
+      <section class="mb-6">
+        <h2 class="text-xl font-bold mb-2">Đăng nhập</h2>
+        <div id="authBox" class="flex gap-2">
+          <button id="btnGoogle" class="btn-primary">Google</button>
+          <button id="btnLogout" class="btn-outline hidden">Đăng xuất</button>
         </div>
+        <p id="authInfo" class="text-sm text-gray-600 mt-2"></p>
       </section>
 
-      <!-- APP -->
-      <section id="appBox" class="hidden space-y-6">
-        <!-- Trạng thái -->
-        <div class="card space-y-2">
-          <h2 class="font-semibold">Cài đặt & Trạng thái</h2>
-          <div class="text-sm text-slate-600">Đăng nhập bằng: <b id="userEmail">-</b></div>
-          <div class="mt-2">
-            <h3 class="font-medium">Thông báo đẩy</h3>
-            <p id="pushState" class="small">Chưa đăng ký.</p>
-            <div class="flex gap-2 mt-2">
-              <button id="btnEnablePush" class="btn w-full">Bật thông báo</button>
-              <button id="btnCheckPush"  class="btn w-full">Kiểm tra trạng thái</button>
-            </div>
-            <p id="pushMsg" class="small"></p>
-          </div>
+      <!-- Thông báo đẩy -->
+      <section class="mb-6">
+        <h2 class="text-xl font-bold mb-2">Thông báo đẩy</h2>
+        <div class="flex gap-2">
+          <button id="btnEnablePush" class="btn-outline">Bật thông báo</button>
+          <button id="btnCheckPush" class="btn-outline">Kiểm tra trạng thái</button>
         </div>
+        <p id="pushState" class="text-sm text-gray-600 mt-2"></p>
+      </section>
 
-        <!-- Tạo ca: FORM TỪNG DÒNG -->
-        <div class="card space-y-3">
-          <h2 class="font-semibold">Tạo ca truyền</h2>
+      <!-- Tạo ca -->
+      <section class="mb-6">
+        <h2 class="text-xl font-bold mb-3">Tạo ca truyền</h2>
+        <form id="createForm" class="space-y-3">
+          <input class="input" id="patient_name" placeholder="Bệnh nhân *" required />
+          <div class="grid grid-cols-2 gap-3">
+            <input class="input" id="room" placeholder="Phòng" />
+            <input class="input" id="bed" placeholder="Giường" />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <input class="input" id="volume_ml" type="number" placeholder="Thể tích (ml) *" required />
+            <input class="input" id="drop_per_ml" type="number" placeholder="Số giọt/ml *" required />
+          </div>
+          <input class="input" id="rate_drop_per_min" type="number" placeholder="Tốc độ (giọt/phút) *" required />
+          <textarea class="input" id="note" rows="2" placeholder="Ghi chú (tuỳ chọn)"></textarea>
 
-          <label class="label" for="patient_name">Bệnh nhân *</label>
-          <input id="patient_name" class="input" placeholder="VD: Tran Thi B" />
-
-          <label class="label" for="room">Phòng</label>
-          <input id="room" class="input" placeholder="VD: A3" />
-
-          <label class="label" for="bed">Giường</label>
-          <input id="bed" class="input" placeholder="VD: 12" />
-
-          <label class="label" for="volume_ml">Thể tích (ml) *</label>
-          <input id="volume_ml" inputmode="numeric" pattern="[0-9]*" type="number" class="input" placeholder="VD: 500" />
-
-          <label class="label" for="drops_per_ml">Số giọt/ml *</label>
-          <input id="drops_per_ml" inputmode="numeric" pattern="[0-9]*" type="number" class="input" placeholder="VD: 20" />
-
-          <label class="label" for="rate_dpm">Tốc độ (giọt/phút) *</label>
-          <input id="rate_dpm" inputmode="numeric" pattern="[0-9]*" type="number" class="input" placeholder="VD: 40" />
-
-          <label class="label" for="notes">Ghi chú</label>
-          <textarea id="notes" rows="2" class="input" placeholder="(tuỳ chọn)"></textarea>
-
-          <label class="inline-flex items-center gap-2">
-            <input id="wants_email" type="checkbox" />
+          <label class="flex items-center gap-2">
+            <input id="email_notify" type="checkbox" />
             <span>Nhận email khi ca kết thúc</span>
           </label>
-          <input id="email_to" type="email" class="input" placeholder="Email nhận (nếu khác tài khoản)" />
+          <input class="input" id="email_to" placeholder="Email nhận (nếu khác tài khoản)" />
 
-          <button id="btnCreate" class="btn-primary">Bắt đầu truyền</button>
-          <p id="createMsg" class="small"></p>
+          <button class="btn-primary w-full" id="btnStart" type="submit">Bắt đầu truyền</button>
+        </form>
+        <p id="createMsg" class="text-sm text-green-600 mt-2"></p>
+      </section>
+
+      <!-- Đang chạy -->
+      <section class="mb-6">
+        <div class="flex items-baseline justify-between">
+          <h2 class="text-xl font-bold">Đang chạy</h2>
+          <button id="btnReloadRunning" class="text-sm underline">Tải lại</button>
         </div>
+        <div id="runningList" class="space-y-3 mt-3"></div>
+      </section>
 
-        <!-- Đang chạy -->
-        <div class="card">
-          <div class="flex items-center justify-between mb-2">
-            <h2 class="font-semibold">Đang chạy</h2>
-            <div class="flex items-center gap-2">
-              <button id="btnReloadRunning" class="btn">Tải lại</button>
-              <span id="runningCount" class="badge bg-sky-100 text-sky-700">0</span>
-            </div>
+      <!-- Lịch sử -->
+      <section class="mb-16">
+        <div class="flex items-baseline justify-between">
+          <h2 class="text-xl font-bold">Lịch sử</h2>
+          <div class="flex gap-2">
+            <button id="btnReloadHistory" class="text-sm underline">Tải lại</button>
+            <button id="btnClearHistory" class="text-sm text-red-600 underline">Xoá lịch sử</button>
           </div>
-          <div id="runningList" class="grid gap-3"></div>
         </div>
-
-        <!-- Lịch sử (đã hoàn thành) -->
-        <div class="card">
-          <div class="flex items-center justify-between mb-2">
-            <h2 class="font-semibold">Lịch sử</h2>
-            <button id="btnReloadHistory" class="btn">Tải lại</button>
-          </div>
-          <div id="historyList" class="grid gap-2"></div>
-        </div>
+        <div id="historyList" class="space-y-3 mt-3"></div>
       </section>
     </main>
 
+    <!-- App JS -->
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

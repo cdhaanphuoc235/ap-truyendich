@@ -1,155 +1,76 @@
-// supabase/functions/cron_dispatcher/index.ts
-// Quét ca đến hạn mỗi lần gọi → gửi OneSignal push + (tùy chọn) email qua notify_email → log → set completed.
-
+// deno.json đã có permissions: "net", "env"
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { SMTPClient } from "https://deno.land/x/denomailer@1.6.2/mod.ts";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SUPABASE_URL  = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE  = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const EMAIL_FROM    = Deno.env.get("EMAIL_FROM")!;         // "AP Truyendich <xxx@gmail.com>"
+const SMTP_HOST     = Deno.env.get("SMTP_HOST")!;          // smtp.gmail.com
+const SMTP_PORT     = Number(Deno.env.get("SMTP_PORT")||465);
+const SMTP_USER     = Deno.env.get("SMTP_USER")!;
+const SMTP_PASS     = Deno.env.get("SMTP_PASS")!;
 
-const ONESIGNAL_APP_ID = Deno.env.get("ONESIGNAL_APP_ID")!;
-const ONESIGNAL_REST_API_KEY = Deno.env.get("ONESIGNAL_REST_API_KEY")!;
+const sb = createClient(SUPABASE_URL, SERVICE_ROLE, {
+  global: { headers: { Authorization: `Bearer ${SERVICE_ROLE}` } },
+});
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+const smtp = new SMTPClient({
+  connection: { hostname: SMTP_HOST, port: SMTP_PORT, tls: true, auth: { username: SMTP_USER, password: SMTP_PASS } },
+});
 
-type Infusion = {
-  id: string;
-  user_id: string;
-  patient_name: string;
-  end_time: string;      // timestamptz
-  wants_email: boolean;
-  email_to: string | null;
-  status: "running" | "completed" | "canceled";
-};
-
-function json(data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json", ...corsHeaders },
-  });
+async function sendEmail(to: string, subject: string, html: string) {
+  try {
+    await smtp.send({ from: EMAIL_FROM, to, subject, html });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e) };
+  }
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
-
-  // Bảo vệ function: yêu cầu Authorization Bearer = SERVICE_ROLE (cron sẽ gửi header này)
-  const auth = req.headers.get("authorization") || "";
-  if (!auth.startsWith("Bearer ") || auth.slice(7).trim() !== SERVICE_ROLE) {
-    return json({ error: "Unauthorized" }, 401);
-  }
-
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
-
   try {
-    // 1) Lấy danh sách ca đến hạn
+    // 1) Lấy các ca đến hạn (UTC)
     const nowIso = new Date().toISOString();
-    const { data: due, error } = await supabase
+    const { data: due, error } = await sb
       .from("infusions")
-      .select("id, user_id, patient_name, end_time, wants_email, email_to, status")
+      .select("*")
       .eq("status", "running")
-      .lte("end_time", nowIso)
-      .order("end_time", { ascending: true })
-      .limit(200);
-
+      .lte("end_time", nowIso);
     if (error) throw error;
-    const items: Infusion[] = due || [];
-    if (!items.length) return json({ ok: true, processed: 0 });
 
-    let pushOK = 0, pushFail = 0, mailOK = 0, mailFail = 0, completed = 0;
+    let processed = 0, pushOK = 0, emailOK = 0;
+    for (const it of due ?? []) {
+      // 2) Gửi push (OneSignal) - OPTIONAL: gọi REST bằng ONESIGNAL_REST_API_KEY nếu bạn đã set
+      // (bạn có thể thêm vào sau; tạm thời tập trung email + update status)
 
-    // 2) Xử lý từng ca (đủ chậm để an toàn; nếu nhiều có thể tối ưu thêm)
-    for (const inf of items) {
-      // 2a) Gửi Push qua OneSignal, target theo external_id = user_id
-      //     Endpoint: POST https://api.onesignal.com/notifications?c=push
-      //     Header: Authorization: Key <REST_API_KEY>, Content-Type: application/json
-      //     Body: { app_id, include_aliases: { external_id: [ inf.user_id ] }, target_channel: "push", ... }
-      //     Tài liệu: docs OneSignal REST push. 
-      const endLocal = new Date(inf.end_time).toLocaleString();
-      const body = {
-        app_id: ONESIGNAL_APP_ID,
-        include_aliases: { external_id: [inf.user_id] },
-        target_channel: "push",
-        headings: { vi: "Ca truyền kết thúc", en: "Infusion finished" },
-        contents: {
-          vi: `BN: ${inf.patient_name} — Kết thúc: ${endLocal}`,
-          en: `Patient: ${inf.patient_name} — End: ${endLocal}`,
-        },
-        web_url: "", // có thể đặt URL app Netlify nếu muốn mở app khi ấn
-        data: { infusion_id: inf.id },
-      };
-
-      try {
-        const res = await fetch("https://api.onesignal.com/notifications?c=push", {
-          method: "POST",
-          headers: {
-            "Authorization": `Key ${ONESIGNAL_REST_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(body),
+      // 3) Gửi email nếu tick
+      if (it.email_notify && it.email_to) {
+        const subj = `Kết thúc truyền: ${it.patient_name} (${it.room}/${it.bed})`;
+        const html = `
+          <p>Ca truyền đã kết thúc.</p>
+          <ul>
+            <li>Bệnh nhân: <b>${it.patient_name}</b></li>
+            <li>Phòng/Giường: ${it.room}/${it.bed}</li>
+            <li>Kết thúc: ${new Date(it.end_time).toLocaleString("vi-VN")}</li>
+            <li>Ghi chú: ${it.note ?? ""}</li>
+          </ul>`;
+        const res = await sendEmail(it.email_to, subj, html);
+        await sb.from("notification_log").insert({
+          infusion_id: it.id, user_id: it.user_id,
+          channel: "email", status: res.ok ? "success" : "failed",
+          detail: res.ok ? null : res.error
         });
-
-        const ok = res.ok;
-        const detail = await safeText(res);
-        await insertLog(supabase, inf.id, inf.user_id, "push", ok ? "success" : "failed", detail);
-        if (ok) pushOK++; else pushFail++;
-      } catch (e) {
-        await insertLog(supabase, inf.id, inf.user_id, "push", "failed", String(e?.message ?? e));
-        pushFail++;
+        if (res.ok) emailOK++;
       }
 
-      // 2b) Gửi Email nếu được yêu cầu (gọi function notify_email đã làm ở Bước 5)
-      if (inf.wants_email) {
-        try {
-          const resMail = await fetch(`${SUPABASE_URL}/functions/v1/notify_email`, {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${SERVICE_ROLE}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ infusion_id: inf.id }),
-          });
-          const ok = resMail.ok;
-          const detail = await safeText(resMail);
-          // notify_email tự log channel=email; ở đây không log lại để tránh trùng, chỉ đếm
-          if (ok) mailOK++; else mailFail++;
-        } catch (e) {
-          await insertLog(supabase, inf.id, inf.user_id, "email", "failed", String(e?.message ?? e));
-          mailFail++;
-        }
-      }
-
-      // 2c) Set completed (tránh gửi lặp ở lần cron sau)
-      const { error: upErr } = await supabase
-        .from("infusions")
-        .update({ status: "completed" })
-        .eq("id", inf.id)
-        .eq("status", "running"); // idempotent
-      if (!upErr) completed++;
+      // 4) Đánh dấu completed
+      const { error: uerr } = await sb.from("infusions").update({ status: "completed" }).eq("id", it.id);
+      if (!uerr) processed++;
     }
 
-    return json({ ok: true, processed: items.length, pushOK, pushFail, mailOK, mailFail, completed });
+    return new Response(JSON.stringify({ ok: true, processed, pushOK, emailOK }), { status: 200 });
   } catch (e) {
-    console.error(e);
-    return json({ error: String(e?.message ?? e) }, 500);
+    return new Response(JSON.stringify({ ok: false, error: String(e?.message || e) }), { status: 500 });
   }
 });
-
-async function insertLog(
-  supabase: any,
-  infusion_id: string,
-  user_id: string,
-  channel: "push" | "email",
-  status: "success" | "failed",
-  detail: string
-) {
-  const { error } = await supabase.from("notification_log").insert({ infusion_id, user_id, channel, status, detail });
-  if (error) console.error("insertLog error:", error);
-}
-async function safeText(res: Response) {
-  try { return await res.text(); } catch { return ""; }
-}

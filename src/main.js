@@ -1,386 +1,253 @@
+// ========= Styles (Tailwind built by Vite) =========
 import "./style.css";
-// Âm thanh thông báo foreground
+
+// ========= Libs =========
+import { createClient } from "@supabase/supabase-js";
+// Nếu bạn đã có file onesignal.js từ trước, giữ lại import dưới.
+// Nếu chưa, có thể tạm comment 3 dòng import và bỏ các tính năng push.
+import {
+  initPushForUser,
+  requestPushPermissionAndSave,
+  checkPushState,
+} from "./onesignal.js";
+
+// ========= Supabase client =========
+// Yêu cầu bạn đã set VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY trong Netlify
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
+
+// ========= Beep in foreground =========
 const alertAudio = new Audio("/sounds/beep.mp3");
 alertAudio.preload = "auto";
 let userInteracted = false;
 window.addEventListener("pointerdown", () => { userInteracted = true; }, { once: true });
-
 function tryBeep() {
-  // Chỉ phát nếu user đã tương tác để tránh bị chặn
   if (!userInteracted) return;
   alertAudio.currentTime = 0;
   alertAudio.play().catch(() => {});
-  if (navigator.vibrate) navigator.vibrate([120, 60, 120]); // rung nhẹ
-}
-import { supabase } from "./supabase.js";
-import { initPushForUser, requestPushPermissionAndSave, checkPushState } from "./onesignal.js";
-
-/* ---------- DOM refs ---------- */
-const authBox = document.getElementById("authBox");
-const appBox  = document.getElementById("appBox");
-
-const emailEl    = document.getElementById("email");
-const passEl     = document.getElementById("password");
-const btnSignIn  = document.getElementById("btnSignIn");
-const btnSignUp  = document.getElementById("btnSignUp");
-const btnGoogle  = document.getElementById("btnGoogle");
-const btnSignOut = document.getElementById("btnSignOut");
-const authMsg    = document.getElementById("authMsg");
-
-const userEmailLbl = document.getElementById("userEmail");
-
-const patientEl = document.getElementById("patient_name");
-const roomEl    = document.getElementById("room");
-const bedEl     = document.getElementById("bed");
-const volEl     = document.getElementById("volume_ml");
-const dpmEl     = document.getElementById("drops_per_ml");
-const rateEl    = document.getElementById("rate_dpm");
-const notesEl   = document.getElementById("notes");
-const wantsMail = document.getElementById("wants_email");
-const emailToEl = document.getElementById("email_to");
-const btnCreate = document.getElementById("btnCreate");
-const createMsg = document.getElementById("createMsg");
-
-const runningCount = document.getElementById("runningCount");
-const runningList  = document.getElementById("runningList");
-const btnReloadRunning = document.getElementById("btnReloadRunning");
-
-const historyList  = document.getElementById("historyList");
-const btnReloadHistory = document.getElementById("btnReloadHistory");
-
-/* Push UI */
-const btnEnablePush = document.getElementById("btnEnablePush");
-const btnCheckPush  = document.getElementById("btnCheckPush");
-const pushState     = document.getElementById("pushState");
-const pushMsg       = document.getElementById("pushMsg");
-
-/* SW & A2HS banners */
-const swUpdateBanner = document.getElementById("swUpdateBanner");
-const btnReload      = document.getElementById("btnReload");
-const installBanner  = document.getElementById("installBanner");
-const btnInstall     = document.getElementById("btnInstall");
-
-let currentUser = null;
-let countdownInterval = null;
-let deferredPrompt = null;
-
-/* ---------- PWA SW + Update Prompt ---------- */
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").then(reg => {
-      if (reg.waiting) showUpdateBanner(reg);
-      reg.addEventListener("updatefound", () => {
-        const sw = reg.installing;
-        if (!sw) return;
-        sw.addEventListener("statechange", () => {
-          if (sw.state === "installed" && reg.waiting) showUpdateBanner(reg);
-        });
-      });
-    }).catch(() => {});
-  });
-}
-function showUpdateBanner(reg){
-  swUpdateBanner.classList.remove("hidden");
-  btnReload.onclick = () => {
-    reg.waiting?.postMessage({ type: "SKIP_WAITING" });
-    setTimeout(() => location.reload(), 250);
-  };
+  if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
 }
 
-/* ---------- A2HS (Android) ---------- */
-window.addEventListener("beforeinstallprompt", (e) => {
-  e.preventDefault();
-  deferredPrompt = e;
-  installBanner.classList.remove("hidden");
-});
-btnInstall.onclick = async () => {
-  if (!deferredPrompt) return;
-  deferredPrompt.prompt();
-  await deferredPrompt.userChoice.catch(()=>{});
-  installBanner.classList.add("hidden");
-  deferredPrompt = null;
-};
+// ========= Helpers =========
+const $ = (id) => document.getElementById(id);
 
-/* ---------- Auth helpers ---------- */
-function setAuthUI(loggedIn) {
-  if (loggedIn) {
-    authBox.classList.add("hidden");
-    appBox.classList.remove("hidden");
-    btnSignOut.classList.remove("hidden");
-  } else {
-    authBox.classList.remove("hidden");
-    appBox.classList.add("hidden");
-    btnSignOut.classList.add("hidden");
-  }
+function fmt(ms) {
+  const s = Math.floor(ms / 1000);
+  const hh = String(Math.floor(s / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+function colorByRemain(remainMs) {
+  const remainMin = remainMs / 60000;
+  if (remainMin <= 0) return "border-red-500";
+  if (remainMin <= 5) return "border-yellow-500";
+  return "border-sky-500";
+}
+function minutesFromFormula(volume, dropsPerMl, rateDropPerMin) {
+  // phút = (ml * giọt/ml) / (giọt/phút)
+  if (!rateDropPerMin) return 0;
+  return (Number(volume) * Number(dropsPerMl)) / Number(rateDropPerMin);
 }
 
-async function getUser() {
+// ========= Auth UI =========
+async function refreshAuthUI() {
   const { data } = await supabase.auth.getUser();
-  currentUser = data.user ?? null;
-  setAuthUI(!!currentUser);
-  if (currentUser) userEmailLbl.textContent = currentUser.email || "-";
-  return currentUser;
-}
-
-/* ---------- Auth actions ---------- */
-btnSignIn.onclick = async () => {
-  authMsg.textContent = "Đang đăng nhập...";
-  const email = emailEl.value.trim();
-  const password = passEl.value;
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  authMsg.textContent = error ? `Lỗi: ${error.message}` : "Đăng nhập thành công.";
-  if (!error) await afterLogin();
-};
-btnSignUp.onclick = async () => {
-  authMsg.textContent = "Đang đăng ký...";
-  const email = emailEl.value.trim();
-  const password = passEl.value;
-  const { error } = await supabase.auth.signUp({ email, password });
-  authMsg.textContent = error ? `Lỗi: ${error.message}` : "Đăng ký thành công. Kiểm tra email xác nhận (nếu bật).";
-};
-btnGoogle.onclick = async () => {
-  authMsg.textContent = "Đang chuyển đến Google...";
-  const site = import.meta.env.VITE_SITE_URL || window.location.origin;
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: { redirectTo: `${site}/`, queryParams: { access_type: "offline", prompt: "consent" } }
-  });
-  if (error) authMsg.textContent = `Lỗi Google OAuth: ${error.message}`;
-};
-btnSignOut.onclick = async () => {
-  try { if (window.OneSignal?.logout) await window.OneSignal.logout(); } catch {}
-  await supabase.auth.signOut();
-  currentUser = null;
-  setAuthUI(false);
-  clearUI();
-};
-
-/* ---------- App logic ---------- */
-function clearUI() {
-  runningList.innerHTML = "";
-  historyList.innerHTML = "";
-  runningCount.textContent = "0";
-  pushState.textContent = "Chưa đăng ký.";
-  pushMsg.textContent = "";
-  if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
-}
-function pad2(n){ return String(n).padStart(2,"0"); }
-function formatHHMMSS(ms) {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
-}
-function colorClassByRemaining(ms){
-  if (ms <= 0) return "box-red";           // đỏ khi quá giờ
-  if (ms <= 5*60*1000) return "box-yellow"; // vàng 5' cuối
-  return "box-blue";                        // xanh dương >5'
-}
-function clamp(v,min,max){ return Math.max(min, Math.min(max,v)); }
-
-/* -------- RUNNING: card với đồng hồ lớn + end_time -------- */
-function renderRunning(items) {
-  runningList.innerHTML = "";
-  items.forEach((it) => {
-    const startMs = new Date(it.start_time).getTime();
-    const endMs   = new Date(it.end_time).getTime();
-
-    const div = document.createElement("div");
-    div.className = "border rounded-2xl p-4";
-    div.dataset.start = String(startMs);
-    div.dataset.end   = String(endMs);
-    div.innerHTML = `
-      <div class="flex items-center justify-between gap-3">
-        <div class="min-w-0">
-          <div class="font-semibold truncate">${escapeHTML(it.patient_name)}</div>
-          <div class="small">${escapeHTML(it.room || "")} ${escapeHTML(it.bed || "")}</div>
-        </div>
-        <div class="text-right small">Kết thúc: ${new Date(it.end_time).toLocaleString()}</div>
-      </div>
-
-      <div class="mt-2 border rounded-xl p-3 text-center countdown-box">
-        <div class="text-4xl font-extrabold countdown">--:--:--</div>
-      </div>
-    `;
-    runningList.appendChild(div);
-  });
-
-  runningCount.textContent = String(items.length);
-  if (countdownInterval) clearInterval(countdownInterval);
-  countdownInterval = setInterval(updateCountdowns, 1000);
-  updateCountdowns();
-}
-
-function updateCountdowns(){
-  const cards = runningList.querySelectorAll("[data-end]");
-  const now = Date.now();
-  cards.forEach(card => {
-    const start = Number(card.dataset.start);
-    const end   = Number(card.dataset.end);
-    const remain = Math.max(0, end - now);
-    const prevRemain = Number(card.dataset.prevRemain || "999999");
-    if (prevRemain > 0 && remain === 0) {
-    tryBeep();
-}
-card.dataset.prevRemain = String(remain);
-    const box  = card.querySelector(".countdown-box");
-    const label= card.querySelector(".countdown");
-    label.textContent = formatHHMMSS(remain);
-    box.className = "mt-2 border rounded-xl p-3 text-center countdown-box " + colorClassByRemaining(remain);
-  });
-}
-
-/* -------- HISTORY: chỉ completed, gọn + trạng thái thông báo -------- */
-function summarizeStatus(logs = []) {
-  // Trả về: { push:'✓/✗/–', email:'✓/✗/–' } dựa trên bản ghi gần nhất mỗi kênh
-  const lastByChannel = {};
-  for (const l of logs) {
-    lastByChannel[l.channel] = lastByChannel[l.channel] || [];
-    lastByChannel[l.channel].push(l);
+  const user = data.user;
+  if (user) {
+    $("#btnGoogle").classList.add("hidden");
+    $("#btnLogout").classList.remove("hidden");
+    $("#authInfo").textContent = `Đăng nhập: ${user.email}`;
+    // init OneSignal cho user
+    try { await initPushForUser({ id: user.id }); } catch {}
+  } else {
+    $("#btnLogout").classList.add("hidden");
+    $("#btnGoogle").classList.remove("hidden");
+    $("#authInfo").textContent = "Chưa đăng nhập.";
   }
-  const res = { push: "–", email: "–" };
-  ["push","email"].forEach(ch => {
-    const arr = (lastByChannel[ch] || []).sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
-    if (arr.length === 0) return;
-    res[ch] = arr[0].status === "success" ? "✓" : "✗";
-  });
-  return res;
 }
+$("#btnGoogle").addEventListener("click", async () => {
+  await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: window.location.origin },
+  });
+});
+$("#btnLogout").addEventListener("click", async () => {
+  await supabase.auth.signOut();
+  await refreshAuthUI();
+});
 
-function renderHistory(items){
-  historyList.innerHTML = "";
-  items.forEach((it) => {
-    const stat = summarizeStatus(it.notifications || []);
-    const row = document.createElement("div");
-    row.className = "border rounded-2xl p-3";
-    row.innerHTML = `
-      <div class="flex items-center justify-between">
+supabase.auth.onAuthStateChange((_e, _s) => refreshAuthUI());
+refreshAuthUI();
+
+// ========= Push buttons =========
+$("#btnEnablePush").addEventListener("click", async () => {
+  const res = await requestPushPermissionAndSave();
+  $("#pushState").textContent = res.ok ? res.message : `Lỗi: ${res.message}`;
+});
+$("#btnCheckPush").addEventListener("click", async () => {
+  const res = await checkPushState();
+  $("#pushState").textContent = res.ok
+    ? `perm=${res.perm}, optedIn=${res.optedIn}, id=${res.subId || "-"}`
+    : `Lỗi: ${res.message}`;
+});
+
+// ========= Create infusion =========
+$("#createForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const { data } = await supabase.auth.getUser();
+  const user = data.user;
+  if (!user) return alert("Hãy đăng nhập Google trước.");
+
+  const patient_name = $("#patient_name").value.trim();
+  const room = $("#room").value.trim();
+  const bed = $("#bed").value.trim();
+  const volume_ml = Number($("#volume_ml").value);
+  const drop_per_ml = Number($("#drop_per_ml").value);
+  const rate_drop_per_min = Number($("#rate_drop_per_min").value);
+  const note = $("#note").value.trim();
+  const email_notify = $("#email_notify").checked;
+  const email_to = ($("#email_to").value || user.email || "").trim();
+
+  if (!patient_name || !volume_ml || !drop_per_ml || !rate_drop_per_min) {
+    return alert("Điền đầy đủ các trường bắt buộc.");
+  }
+
+  const minutes = minutesFromFormula(volume_ml, drop_per_ml, rate_drop_per_min);
+  const start_time = new Date();
+  const end_time = new Date(start_time.getTime() + minutes * 60000);
+
+  const { error } = await supabase.from("infusions").insert({
+    user_id: user.id,
+    patient_name, room, bed,
+    volume_ml, drop_per_ml, rate_drop_per_min,
+    start_time: start_time.toISOString(),
+    end_time: end_time.toISOString(),
+    note,
+    email_notify,
+    email_to: email_notify ? email_to : null,
+    status: "running",
+  });
+
+  $("#createMsg").textContent = error ? `Lỗi: ${error.message}` : "Đã bắt đầu truyền.";
+  if (!error) {
+    $("#createForm").reset();
+    await loadRunning();
+  }
+});
+
+// ========= Lists (running & history) =========
+let runningCache = [];
+
+function renderRunning(list) {
+  const wrap = $("#runningList");
+  wrap.innerHTML = "";
+  for (const it of list) {
+    const remain = Math.max(0, new Date(it.end_time) - Date.now());
+    const card = document.createElement("div");
+    card.className = `card border-2 ${colorByRemain(remain)}`;
+    card.dataset.id = it.id;
+    card.innerHTML = `
+      <div class="flex justify-between">
         <div>
-          <div class="font-medium">${escapeHTML(it.patient_name)}</div>
-          <div class="small">Kết thúc: ${new Date(it.end_time).toLocaleString()}</div>
+          <div class="font-semibold">${it.patient_name}</div>
+          <div class="text-sm text-gray-600">${it.room ?? ""}/${it.bed ?? ""}</div>
         </div>
-        <div class="text-right small">
-          <div>Push: <b>${stat.push}</b></div>
-          <div>Email: <b>${stat.email}</b></div>
-        </div>
+        <div class="tag">Kết thúc: ${new Date(it.end_time).toLocaleTimeString("vi-VN")}</div>
       </div>
+      <div class="mt-2 text-3xl font-black tabular-nums" id="t-${it.id}">${fmt(remain)}</div>
     `;
-    historyList.appendChild(row);
-  });
+    wrap.appendChild(card);
+  }
 }
 
-/* ---------- Data ops ---------- */
+function renderHistory(list) {
+  const wrap = $("#historyList");
+  wrap.innerHTML = "";
+  for (const it of list) {
+    const item = document.createElement("div");
+    item.className = "card border";
+    item.innerHTML = `
+      <div class="flex justify-between">
+        <div>
+          <div class="font-semibold">${it.patient_name}</div>
+          <div class="text-sm text-gray-600">${it.room ?? ""}/${it.bed ?? ""}</div>
+        </div>
+        <div class="tag">Kết thúc: ${new Date(it.end_time).toLocaleString("vi-VN")}</div>
+      </div>
+      <div class="text-sm mt-2">Push: ${it.push_sent ? "✓" : "—"} · Email: ${it.email_sent ? "✓" : "—"}</div>
+    `;
+    wrap.appendChild(item);
+  }
+}
+
 async function loadRunning() {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return;
   const { data, error } = await supabase
     .from("infusions")
-    .select("id, user_id, patient_name, room, bed, start_time, end_time, status")
+    .select("*")
+    .eq("user_id", auth.user.id)
     .eq("status", "running")
     .order("end_time", { ascending: true });
-  if (error) console.error(error);
-  renderRunning(data || []);
+  if (error) return console.error(error);
+  runningCache = data || [];
+  renderRunning(runningCache);
 }
+
 async function loadHistory() {
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return;
+  // Nếu bạn có view v_history thì thay bằng from("v_history")
   const { data, error } = await supabase
-    .from("v_history")
-    .select("*")
+    .from("infusions")
+    .select("id,patient_name,room,bed,end_time,push_sent,email_sent,status")
+    .eq("user_id", auth.user.id)
+    .eq("status", "completed")
     .order("end_time", { ascending: false })
-    .limit(50);
-  if (error) { console.error(error); return; }
+    .limit(100);
+  if (error) return console.error(error);
   renderHistory(data || []);
 }
-btnReloadRunning.onclick = loadRunning;
-btnReloadHistory.onclick = loadHistory;
 
-/* ---------- Create infusion ---------- */
-btnCreate.onclick = async () => {
-  createMsg.textContent = "Đang tạo ca...";
-  if (!currentUser) { createMsg.textContent = "Vui lòng đăng nhập trước."; return; }
-  try {
-    const volume_ml    = Number(volEl.value);
-    const drops_per_ml = Number(dpmEl.value);
-    const rate_dpm     = Number(rateEl.value);
-    if (!patientEl.value.trim() || !(volume_ml>0) || !(drops_per_ml>0) || !(rate_dpm>0)) {
-      createMsg.textContent = "Thiếu hoặc sai dữ liệu bắt buộc.";
-      return;
-    }
-    const start = new Date();
-    const minutes = Math.ceil((volume_ml * drops_per_ml) / rate_dpm);
-    const end = new Date(start.getTime() + minutes * 60 * 1000);
+$("#btnReloadRunning").addEventListener("click", loadRunning);
+$("#btnReloadHistory").addEventListener("click", loadHistory);
 
-    const payload = {
-      user_id: currentUser.id,
-      patient_name: patientEl.value.trim(),
-      room: roomEl.value.trim() || null,
-      bed: bedEl.value.trim() || null,
-      volume_ml, drops_per_ml, rate_dpm,
-      start_time: start.toISOString(),
-      end_time: end.toISOString(), // server có trigger nếu thiếu
-      notes: notesEl.value.trim() || null,
-      wants_email: !!wantsMail.checked,
-      email_to: emailToEl.value.trim() || null
-    };
-    const { error } = await supabase.from("infusions").insert(payload);
-    if (error) throw error;
+$("#btnClearHistory").addEventListener("click", async () => {
+  if (!confirm("Xoá toàn bộ lịch sử của bạn?")) return;
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return alert("Bạn chưa đăng nhập.");
+  const { error } = await supabase
+    .from("infusions")
+    .delete()
+    .eq("user_id", auth.user.id)
+    .eq("status", "completed");
+  if (error) alert("Lỗi xoá: " + error.message);
+  else loadHistory();
+});
 
-    createMsg.textContent = "Đã bắt đầu truyền.";
-    // reset tối thiểu để thao tác nhanh một tay
-    volEl.value = ""; dpmEl.value = ""; rateEl.value = ""; notesEl.value = ""; emailToEl.value = ""; wantsMail.checked = false;
-    await loadRunning();
-  } catch (e) {
-    console.error(e);
-    createMsg.textContent = "Lỗi tạo ca: " + (e?.message || e);
+// ========= Countdown tick =========
+setInterval(() => {
+  for (const it of runningCache) {
+    const el = document.getElementById(`t-${it.id}`);
+    if (!el) continue;
+    const end = new Date(it.end_time).getTime();
+    const now = Date.now();
+    const remain = Math.max(0, end - now);
+    const prev = Number(el.dataset.prev || "999999");
+    if (prev > 0 && remain === 0) tryBeep();
+    el.dataset.prev = String(remain);
+    el.textContent = fmt(remain);
+    const card = el.closest(".card");
+    if (card) card.className = `card border-2 ${colorByRemain(remain)}`;
   }
-};
+}, 1000);
 
-/* ---------- Push UI handlers ---------- */
-btnEnablePush.onclick = async () => {
-  if (!currentUser) { pushMsg.textContent = "Vui lòng đăng nhập."; return; }
-  pushMsg.textContent = "Đang yêu cầu quyền...";
-  const res = await requestPushPermissionAndSave(currentUser);
-  pushMsg.textContent = res.message || "";
-  await refreshPushState();
-};
-btnCheckPush.onclick = async () => { await refreshPushState(); };
+// ========= First load =========
+loadRunning();
+loadHistory();
 
-async function refreshPushState(){
-  try {
-    const st = await checkPushState();
-    if (!st.ok) { pushState.textContent = st.message || "Không xác định"; return; }
-    pushState.textContent = (st.perm ? "ĐÃ CẤP QUYỀN" : "CHƯA CẤP QUYỀN") +
-      (st.optedIn ? " | ĐÃ ĐĂNG KÝ" : " | CHƯA ĐĂNG KÝ") +
-      (st.subId ? ` | ID: ${st.subId}` : "");
-  } catch (e) {
-    pushState.textContent = e?.message || "Lỗi trạng thái";
-  }
-}
-
-/* ---------- Realtime ---------- */
-function setupRealtime() {
-  if (!currentUser) return;
-  supabase.channel("infusions-change")
-    .on("postgres_changes",
-      { event: "*", schema: "public", table: "infusions", filter: `user_id=eq.${currentUser.id}` },
-      async () => { await loadRunning(); await loadHistory(); }
-    ).subscribe();
-}
-
-/* ---------- Helpers ---------- */
-function escapeHTML(s){ return (s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-
-/* ---------- After login ---------- */
-async function afterLogin(){
-  setAuthUI(true);
-  userEmailLbl.textContent = currentUser?.email || "-";
-  await loadRunning();
-  await loadHistory();
-  setupRealtime();
-  await initPushForUser(currentUser);
-  await refreshPushState();
-}
-
-/* ---------- Boot ---------- */
-(async () => {
-  await getUser();
-  if (currentUser) await afterLogin();
-})();
+// ========= Minimal Tailwind components (via CSS classes) =========
+// (Các class .input, .btn-primary, .btn-outline, .card, .tag đã định nghĩa trong src/style.css)

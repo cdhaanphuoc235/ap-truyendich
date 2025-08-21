@@ -2,11 +2,20 @@
   command = "npm ci && npm run build"
   publish = "dist"
 
+# Đừng cache SW
 [[headers]]
   for = "/sw.js"
   [headers.values]
     Cache-Control = "no-cache"
 
+# Giữ nguyên file SW & SDK, không rewrite về index.html
+[[redirects]]
+  from = "/sw.js"
+  to = "/sw.js"
+  status = 200
+  force = true
+
+# SPA rewrite cho phần còn lại
 [[redirects]]
   from = "/*"
   to = "/index.html"

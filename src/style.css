@@ -1,13 +1,12 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@tailwind base; @tailwind components; @tailwind utilities;
 
-/* Inputs & buttons: big, thumb-friendly */
-.input { @apply w-full border rounded-lg px-3 py-3 text-base; }
-.label { @apply text-sm text-slate-600; }
-.btn-primary { @apply w-full rounded-xl py-3 text-lg font-semibold text-white bg-sky-600 hover:bg-sky-700 shadow; }
-.btn { @apply px-3 py-2 rounded-lg text-sm bg-slate-100 hover:bg-slate-200; }
-.badge { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium; }
+@layer components{
+  .input{ @apply w-full rounded-xl border border-gray-300 px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-sky-500;}
+  .btn-primary{ @apply bg-sky-600 text-white rounded-xl px-4 py-2 font-semibold active:scale-95;}
+  .btn-outline{ @apply border border-gray-300 rounded-xl px-4 py-2 font-medium;}
+  .card{ @apply rounded-2xl border p-4 shadow-sm;}
+  .tag{ @apply inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs;}
+}
 
 /* Cards */
 .card { @apply bg-white rounded-2xl shadow p-4; }
