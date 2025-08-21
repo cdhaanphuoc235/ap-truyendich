@@ -9,6 +9,7 @@ const emailEl    = document.getElementById("email");
 const passEl     = document.getElementById("password");
 const btnSignIn  = document.getElementById("btnSignIn");
 const btnSignUp  = document.getElementById("btnSignUp");
+const btnGoogle  = document.getElementById("btnGoogle");
 const btnSignOut = document.getElementById("btnSignOut");
 const authMsg    = document.getElementById("authMsg");
 
@@ -50,7 +51,6 @@ let countdownInterval = null;
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").then(reg => {
-      // Khi có SW mới chờ activate
       if (reg.waiting) showUpdateBanner(reg);
       reg.addEventListener("updatefound", () => {
         const sw = reg.installing;
@@ -91,7 +91,7 @@ async function getUser() {
   return currentUser;
 }
 
-/* ---------- Sign In / Sign Up / Sign Out ---------- */
+/* ---------- Sign In / Sign Up / Sign Out / Google OAuth ---------- */
 btnSignIn.onclick = async () => {
   authMsg.textContent = "Đang đăng nhập...";
   const email = emailEl.value.trim();
@@ -100,6 +100,7 @@ btnSignIn.onclick = async () => {
   authMsg.textContent = error ? `Lỗi: ${error.message}` : "Đăng nhập thành công.";
   if (!error) await afterLogin();
 };
+
 btnSignUp.onclick = async () => {
   authMsg.textContent = "Đang đăng ký...";
   const email = emailEl.value.trim();
@@ -107,6 +108,24 @@ btnSignUp.onclick = async () => {
   const { error } = await supabase.auth.signUp({ email, password });
   authMsg.textContent = error ? `Lỗi: ${error.message}` : "Đăng ký thành công. Kiểm tra email xác nhận (nếu bật).";
 };
+
+btnGoogle.onclick = async () => {
+  authMsg.textContent = "Đang chuyển đến Google...";
+  const site = import.meta.env.VITE_SITE_URL || window.location.origin;
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: `${site}/`,
+      queryParams: {
+        access_type: "offline",
+        prompt: "consent"
+      }
+    }
+  });
+  if (error) authMsg.textContent = `Lỗi Google OAuth: ${error.message}`;
+  // Trình duyệt sẽ redirect; khi quay lại, session đã có → Boot() sẽ nhận diện.
+};
+
 btnSignOut.onclick = async () => {
   try { if (window.OneSignal?.logout) await window.OneSignal.logout(); } catch {}
   await supabase.auth.signOut();
@@ -195,7 +214,7 @@ function renderHistory(items){
   items.forEach((it) => {
     const row = document.createElement("div");
     row.className = "border rounded-xl p-3";
-    const logs = (it.notifications || []).slice(0, 5); // hiển thị tối đa 5 log gần nhất
+    const logs = (it.notifications || []).slice(0, 5);
     row.innerHTML = `
       <div class="flex items-center justify-between">
         <div>
@@ -231,7 +250,6 @@ async function loadRunning() {
   renderRunning(data || []);
 }
 async function loadHistory() {
-  // Dùng view v_history để kéo kèm notifications (Bước 2 đã tạo)
   const { data, error } = await supabase
     .from("v_history")
     .select("*")
