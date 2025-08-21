@@ -40,14 +40,17 @@ const btnCheckPush  = document.getElementById("btnCheckPush");
 const pushState     = document.getElementById("pushState");
 const pushMsg       = document.getElementById("pushMsg");
 
-/* SW update banner */
+/* SW & A2HS banners */
 const swUpdateBanner = document.getElementById("swUpdateBanner");
 const btnReload      = document.getElementById("btnReload");
+const installBanner  = document.getElementById("installBanner");
+const btnInstall     = document.getElementById("btnInstall");
 
 let currentUser = null;
 let countdownInterval = null;
+let deferredPrompt = null;
 
-/* ---------- PWA SW with update prompt ---------- */
+/* ---------- PWA SW + Update Prompt ---------- */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js").then(reg => {
@@ -70,6 +73,20 @@ function showUpdateBanner(reg){
   };
 }
 
+/* ---------- A2HS (Android) ---------- */
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  installBanner.classList.remove("hidden");
+});
+btnInstall.onclick = async () => {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  await deferredPrompt.userChoice.catch(()=>{});
+  installBanner.classList.add("hidden");
+  deferredPrompt = null;
+};
+
 /* ---------- Auth helpers ---------- */
 function setAuthUI(loggedIn) {
   if (loggedIn) {
@@ -91,7 +108,7 @@ async function getUser() {
   return currentUser;
 }
 
-/* ---------- Sign In / Sign Up / Sign Out / Google OAuth ---------- */
+/* ---------- Auth actions ---------- */
 btnSignIn.onclick = async () => {
   authMsg.textContent = "Đang đăng nhập...";
   const email = emailEl.value.trim();
@@ -100,7 +117,6 @@ btnSignIn.onclick = async () => {
   authMsg.textContent = error ? `Lỗi: ${error.message}` : "Đăng nhập thành công.";
   if (!error) await afterLogin();
 };
-
 btnSignUp.onclick = async () => {
   authMsg.textContent = "Đang đăng ký...";
   const email = emailEl.value.trim();
@@ -108,24 +124,15 @@ btnSignUp.onclick = async () => {
   const { error } = await supabase.auth.signUp({ email, password });
   authMsg.textContent = error ? `Lỗi: ${error.message}` : "Đăng ký thành công. Kiểm tra email xác nhận (nếu bật).";
 };
-
 btnGoogle.onclick = async () => {
   authMsg.textContent = "Đang chuyển đến Google...";
   const site = import.meta.env.VITE_SITE_URL || window.location.origin;
   const { error } = await supabase.auth.signInWithOAuth({
     provider: "google",
-    options: {
-      redirectTo: `${site}/`,
-      queryParams: {
-        access_type: "offline",
-        prompt: "consent"
-      }
-    }
+    options: { redirectTo: `${site}/`, queryParams: { access_type: "offline", prompt: "consent" } }
   });
   if (error) authMsg.textContent = `Lỗi Google OAuth: ${error.message}`;
-  // Trình duyệt sẽ redirect; khi quay lại, session đã có → Boot() sẽ nhận diện.
 };
-
 btnSignOut.onclick = async () => {
   try { if (window.OneSignal?.logout) await window.OneSignal.logout(); } catch {}
   await supabase.auth.signOut();
@@ -143,7 +150,6 @@ function clearUI() {
   pushMsg.textContent = "";
   if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
 }
-
 function pad2(n){ return String(n).padStart(2,"0"); }
 function formatHHMMSS(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -153,37 +159,39 @@ function formatHHMMSS(ms) {
   return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
 }
 function colorClassByRemaining(ms){
-  if (ms <= 0) return "box-red";
-  if (ms <= 5*60*1000) return "box-yellow";
-  return "box-blue";
+  if (ms <= 0) return "box-red";           // đỏ khi quá giờ
+  if (ms <= 5*60*1000) return "box-yellow"; // vàng 5' cuối
+  return "box-blue";                        // xanh dương >5'
 }
 function clamp(v,min,max){ return Math.max(min, Math.min(max,v)); }
 
-/* -------- RUNNING render with progress -------- */
+/* -------- RUNNING: card với đồng hồ lớn + end_time -------- */
 function renderRunning(items) {
   runningList.innerHTML = "";
   items.forEach((it) => {
     const startMs = new Date(it.start_time).getTime();
     const endMs   = new Date(it.end_time).getTime();
+
     const div = document.createElement("div");
-    div.className = "border rounded-xl p-3";
+    div.className = "border rounded-2xl p-4";
     div.dataset.start = String(startMs);
     div.dataset.end   = String(endMs);
     div.innerHTML = `
       <div class="flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div class="font-semibold truncate">${escapeHTML(it.patient_name)}</div>
-          <div class="text-xs text-slate-500">${escapeHTML(it.room || "")} ${escapeHTML(it.bed || "")}</div>
+          <div class="small">${escapeHTML(it.room || "")} ${escapeHTML(it.bed || "")}</div>
         </div>
-        <div class="text-right text-xs text-slate-500">Kết thúc: ${new Date(it.end_time).toLocaleString()}</div>
+        <div class="text-right small">Kết thúc: ${new Date(it.end_time).toLocaleString()}</div>
       </div>
+
       <div class="mt-2 border rounded-xl p-3 text-center countdown-box">
-        <div class="text-3xl font-bold countdown">--:--:--</div>
+        <div class="text-4xl font-extrabold countdown">--:--:--</div>
       </div>
-      <div class="mt-2 progress-wrap"><div class="progress-bar" style="width:0%"></div></div>
     `;
     runningList.appendChild(div);
   });
+
   runningCount.textContent = String(items.length);
   if (countdownInterval) clearInterval(countdownInterval);
   countdownInterval = setInterval(updateCountdowns, 1000);
@@ -197,43 +205,47 @@ function updateCountdowns(){
     const start = Number(card.dataset.start);
     const end   = Number(card.dataset.end);
     const remain = Math.max(0, end - now);
-    const total  = Math.max(1, end - start);
-    const donePct = clamp(((now - start) / total) * 100, 0, 100);
     const box  = card.querySelector(".countdown-box");
     const label= card.querySelector(".countdown");
-    const bar  = card.querySelector(".progress-bar");
     label.textContent = formatHHMMSS(remain);
     box.className = "mt-2 border rounded-xl p-3 text-center countdown-box " + colorClassByRemaining(remain);
-    if (bar) bar.style.width = `${donePct}%`;
   });
 }
 
-/* -------- HISTORY (with logs) -------- */
+/* -------- HISTORY: chỉ completed, gọn + trạng thái thông báo -------- */
+function summarizeStatus(logs = []) {
+  // Trả về: { push:'✓/✗/–', email:'✓/✗/–' } dựa trên bản ghi gần nhất mỗi kênh
+  const lastByChannel = {};
+  for (const l of logs) {
+    lastByChannel[l.channel] = lastByChannel[l.channel] || [];
+    lastByChannel[l.channel].push(l);
+  }
+  const res = { push: "–", email: "–" };
+  ["push","email"].forEach(ch => {
+    const arr = (lastByChannel[ch] || []).sort((a,b)=> new Date(b.created_at)-new Date(a.created_at));
+    if (arr.length === 0) return;
+    res[ch] = arr[0].status === "success" ? "✓" : "✗";
+  });
+  return res;
+}
+
 function renderHistory(items){
   historyList.innerHTML = "";
   items.forEach((it) => {
+    const stat = summarizeStatus(it.notifications || []);
     const row = document.createElement("div");
-    row.className = "border rounded-xl p-3";
-    const logs = (it.notifications || []).slice(0, 5);
+    row.className = "border rounded-2xl p-3";
     row.innerHTML = `
       <div class="flex items-center justify-between">
         <div>
           <div class="font-medium">${escapeHTML(it.patient_name)}</div>
-          <div class="text-xs text-slate-500">Kết thúc: ${new Date(it.end_time).toLocaleString()}</div>
+          <div class="small">Kết thúc: ${new Date(it.end_time).toLocaleString()}</div>
         </div>
-        <span class="badge bg-slate-100 text-slate-700">${it.status}</span>
+        <div class="text-right small">
+          <div>Push: <b>${stat.push}</b></div>
+          <div>Email: <b>${stat.email}</b></div>
+        </div>
       </div>
-      <details class="mt-2">
-        <summary class="text-sm text-slate-600 cursor-pointer">Nhật ký thông báo (${logs.length})</summary>
-        <div class="mt-2 grid gap-1">
-          ${logs.map(l => `
-            <div class="text-xs text-slate-600 border rounded px-2 py-1">
-              <b>${escapeHTML(l.channel)}</b> — ${escapeHTML(l.status)} — ${new Date(l.created_at).toLocaleString()}
-              ${l.detail ? `<div class="text-[11px] text-slate-500 mt-1">detail: ${escapeHTML(l.detail)}</div>` : ""}
-            </div>
-          `).join("")}
-        </div>
-      </details>
     `;
     historyList.appendChild(row);
   });
@@ -243,7 +255,7 @@ function renderHistory(items){
 async function loadRunning() {
   const { data, error } = await supabase
     .from("infusions")
-    .select("*")
+    .select("id, user_id, patient_name, room, bed, start_time, end_time, status")
     .eq("status", "running")
     .order("end_time", { ascending: true });
   if (error) console.error(error);
@@ -254,14 +266,14 @@ async function loadHistory() {
     .from("v_history")
     .select("*")
     .order("end_time", { ascending: false })
-    .limit(30);
+    .limit(50);
   if (error) { console.error(error); return; }
   renderHistory(data || []);
 }
-
 btnReloadRunning.onclick = loadRunning;
 btnReloadHistory.onclick = loadHistory;
 
+/* ---------- Create infusion ---------- */
 btnCreate.onclick = async () => {
   createMsg.textContent = "Đang tạo ca...";
   if (!currentUser) { createMsg.textContent = "Vui lòng đăng nhập trước."; return; }
@@ -284,7 +296,7 @@ btnCreate.onclick = async () => {
       bed: bedEl.value.trim() || null,
       volume_ml, drops_per_ml, rate_dpm,
       start_time: start.toISOString(),
-      end_time: end.toISOString(),
+      end_time: end.toISOString(), // server có trigger nếu thiếu
       notes: notesEl.value.trim() || null,
       wants_email: !!wantsMail.checked,
       email_to: emailToEl.value.trim() || null
@@ -292,9 +304,9 @@ btnCreate.onclick = async () => {
     const { error } = await supabase.from("infusions").insert(payload);
     if (error) throw error;
 
-    createMsg.textContent = "Đã tạo ca truyền.";
-    volEl.value = ""; dpmEl.value = ""; rateEl.value = "";
-    notesEl.value = ""; wantsMail.checked = false; emailToEl.value = "";
+    createMsg.textContent = "Đã bắt đầu truyền.";
+    // reset tối thiểu để thao tác nhanh một tay
+    volEl.value = ""; dpmEl.value = ""; rateEl.value = ""; notesEl.value = ""; emailToEl.value = ""; wantsMail.checked = false;
     await loadRunning();
   } catch (e) {
     console.error(e);

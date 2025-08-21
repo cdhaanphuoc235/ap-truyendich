@@ -2,18 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Badges nhỏ */
+/* Inputs & buttons: big, thumb-friendly */
+.input { @apply w-full border rounded-lg px-3 py-3 text-base; }
+.label { @apply text-sm text-slate-600; }
+.btn-primary { @apply w-full rounded-xl py-3 text-lg font-semibold text-white bg-sky-600 hover:bg-sky-700 shadow; }
+.btn { @apply px-3 py-2 rounded-lg text-sm bg-slate-100 hover:bg-slate-200; }
 .badge { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium; }
 
-/* Progress bar khung */
-.progress-wrap { @apply w-full h-2 rounded-full bg-slate-100 overflow-hidden; }
-/* Progress bar thanh chạy */
-.progress-bar { @apply h-2 bg-sky-500; transition: width .25s linear; }
+/* Cards */
+.card { @apply bg-white rounded-2xl shadow p-4; }
 
-/* Banner cập nhật SW */
-.update-banner { @apply fixed bottom-3 inset-x-0 mx-auto w-fit px-3 py-2 rounded-xl shadow bg-amber-100 text-amber-800 border border-amber-300; }
-
-/* Card countdown màu */
+/* Countdown color states */
 .box-blue   { @apply text-sky-700   bg-sky-50   border-sky-300; }
 .box-yellow { @apply text-yellow-700 bg-yellow-50 border-yellow-300; }
 .box-red    { @apply text-red-700   bg-red-50   border-red-300; }
+
+/* Progress bar (giữ lại nếu bạn thích) */
+.progress-wrap { @apply w-full h-2 rounded-full bg-slate-100 overflow-hidden; }
+.progress-bar { @apply h-2 bg-sky-500; transition: width .25s linear; }
+
+/* SW banners */
+.update-banner { @apply fixed bottom-3 left-1/2 -translate-x-1/2 w-[92%] max-w-md px-3 py-2 rounded-xl shadow bg-amber-100 text-amber-800 border border-amber-300 flex items-center justify-between gap-3; }
+.install-banner { @apply fixed bottom-20 left-1/2 -translate-x-1/2 w-[92%] max-w-md px-3 py-2 rounded-xl shadow bg-emerald-50 text-emerald-800 border border-emerald-300 flex items-center justify-between gap-3; }
+
+/* Typography tweaks */
+.h-title { @apply text-xl font-bold text-sky-600; }
+.small  { @apply text-xs text-slate-500; }

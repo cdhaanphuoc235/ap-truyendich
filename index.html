@@ -13,110 +13,115 @@
     <script>window.OneSignalDeferred = window.OneSignalDeferred || [];</script>
   </head>
   <body class="bg-sky-50 text-slate-800">
-    <!-- Banner cập nhật SW (ẩn mặc định) -->
+    <!-- Banners -->
+    <div id="installBanner" class="install-banner hidden">
+      <span>Cài đặt ứng dụng để nhận nhắc ngay cả khi đóng.</span>
+      <button id="btnInstall" class="btn">Cài đặt</button>
+    </div>
     <div id="swUpdateBanner" class="update-banner hidden">
-      Có phiên bản mới. <button id="btnReload" class="ml-2 underline">Cập nhật</button>
+      <span>Có phiên bản mới.</span>
+      <button id="btnReload" class="btn">Cập nhật</button>
     </div>
 
     <header class="sticky top-0 z-10 bg-white/80 backdrop-blur border-b">
       <div class="max-w-xl mx-auto px-4 py-3 flex items-center justify-between">
-        <h1 class="text-xl font-bold text-sky-600">AP – Truyendich</h1>
-        <button id="btnSignOut" class="hidden text-sm px-3 py-1 rounded bg-slate-100 hover:bg-slate-200">Đăng xuất</button>
+        <h1 class="h-title">AP – Truyendich</h1>
+        <button id="btnSignOut" class="hidden btn">Đăng xuất</button>
       </div>
     </header>
 
     <main class="max-w-xl mx-auto px-4 py-4 space-y-6">
       <!-- AUTH -->
-      <section id="authBox" class="bg-white rounded-2xl shadow p-4 space-y-3">
+      <section id="authBox" class="card space-y-3">
         <h2 class="font-semibold">Đăng nhập / Đăng ký</h2>
         <div class="grid gap-2">
-          <input id="email" type="email" placeholder="Email" class="border rounded px-3 py-2" />
-          <input id="password" type="password" placeholder="Mật khẩu (>=6 ký tự)" class="border rounded px-3 py-2" />
+          <label class="label" for="email">Email</label>
+          <input id="email" type="email" class="input" placeholder="you@hospital.vn" autocomplete="email" />
+
+          <label class="label" for="password">Mật khẩu</label>
+          <input id="password" type="password" class="input" placeholder="≥ 6 ký tự" autocomplete="current-password" />
+
+          <div class="flex gap-2 mt-2">
+            <button id="btnSignIn" class="btn-primary">Đăng nhập</button>
+          </div>
           <div class="flex gap-2">
-            <button id="btnSignIn" class="flex-1 bg-sky-600 text-white rounded py-2">Đăng nhập</button>
-            <button id="btnSignUp" class="flex-1 bg-slate-800 text-white rounded py-2">Đăng ký</button>
+            <button id="btnSignUp" class="btn w-full">Đăng ký</button>
+            <button id="btnGoogle" class="btn w-full">🔐 Google</button>
           </div>
 
-          <div class="relative my-2">
-            <div class="border-t"></div>
-            <div class="absolute inset-x-0 -top-3 text-center">
-              <span class="bg-white px-2 text-xs text-slate-500">hoặc</span>
-            </div>
-          </div>
-
-          <button id="btnGoogle" class="w-full border rounded py-2 font-medium bg-white hover:bg-slate-50">
-            🔐 Đăng nhập Google
-          </button>
-
-          <p id="authMsg" class="text-sm text-slate-500"></p>
+          <p id="authMsg" class="small"></p>
         </div>
       </section>
 
       <!-- APP -->
       <section id="appBox" class="hidden space-y-6">
-        <!-- Cài đặt & Trạng thái -->
-        <div class="bg-white rounded-2xl shadow p-4 space-y-2">
+        <!-- Trạng thái -->
+        <div class="card space-y-2">
           <h2 class="font-semibold">Cài đặt & Trạng thái</h2>
-          <div class="text-sm text-slate-600">
-            <div>Đăng nhập bằng: <b id="userEmail">-</b></div>
-          </div>
+          <div class="text-sm text-slate-600">Đăng nhập bằng: <b id="userEmail">-</b></div>
           <div class="mt-2">
             <h3 class="font-medium">Thông báo đẩy</h3>
-            <p id="pushState" class="text-sm text-slate-600">Chưa đăng ký.</p>
+            <p id="pushState" class="small">Chưa đăng ký.</p>
             <div class="flex gap-2 mt-2">
-              <button id="btnEnablePush" class="flex-1 bg-emerald-600 text-white rounded py-2">Bật thông báo</button>
-              <button id="btnCheckPush" class="flex-1 bg-slate-700 text-white rounded py-2">Kiểm tra trạng thái</button>
+              <button id="btnEnablePush" class="btn w-full">Bật thông báo</button>
+              <button id="btnCheckPush"  class="btn w-full">Kiểm tra trạng thái</button>
             </div>
-            <p id="pushMsg" class="text-xs text-slate-500"></p>
+            <p id="pushMsg" class="small"></p>
           </div>
         </div>
 
-        <!-- Tạo ca -->
-        <div class="bg-white rounded-2xl shadow p-4 space-y-3">
+        <!-- Tạo ca: FORM TỪNG DÒNG -->
+        <div class="card space-y-3">
           <h2 class="font-semibold">Tạo ca truyền</h2>
-          <div class="grid gap-2">
-            <input id="patient_name" class="border rounded px-3 py-2 text-base" placeholder="Bệnh nhân *" />
-            <div class="grid grid-cols-2 gap-2">
-              <input id="room" class="border rounded px-3 py-2" placeholder="Phòng" />
-              <input id="bed" class="border rounded px-3 py-2" placeholder="Giường" />
-            </div>
-            <div class="grid grid-cols-3 gap-2">
-              <input id="volume_ml" type="number" class="border rounded px-3 py-2" placeholder="Thể tích (ml) *" />
-              <input id="drops_per_ml" type="number" class="border rounded px-3 py-2" placeholder="Số giọt/ml *" />
-              <input id="rate_dpm" type="number" class="border rounded px-3 py-2" placeholder="Tốc độ (giọt/phút) *" />
-            </div>
-            <textarea id="notes" rows="2" class="border rounded px-3 py-2" placeholder="Ghi chú (tùy chọn)"></textarea>
 
-            <label class="inline-flex items-center gap-2">
-              <input id="wants_email" type="checkbox" />
-              <span>Nhận email khi ca kết thúc</span>
-            </label>
-            <input id="email_to" type="email" class="border rounded px-3 py-2" placeholder="Email nhận (nếu khác tài khoản)" />
+          <label class="label" for="patient_name">Bệnh nhân *</label>
+          <input id="patient_name" class="input" placeholder="VD: Tran Thi B" />
 
-            <button id="btnCreate" class="w-full bg-sky-600 text-white rounded py-3 text-lg font-semibold shadow hover:bg-sky-700">
-              Bắt đầu truyền
-            </button>
-            <p id="createMsg" class="text-sm text-slate-500"></p>
-          </div>
+          <label class="label" for="room">Phòng</label>
+          <input id="room" class="input" placeholder="VD: A3" />
+
+          <label class="label" for="bed">Giường</label>
+          <input id="bed" class="input" placeholder="VD: 12" />
+
+          <label class="label" for="volume_ml">Thể tích (ml) *</label>
+          <input id="volume_ml" inputmode="numeric" pattern="[0-9]*" type="number" class="input" placeholder="VD: 500" />
+
+          <label class="label" for="drops_per_ml">Số giọt/ml *</label>
+          <input id="drops_per_ml" inputmode="numeric" pattern="[0-9]*" type="number" class="input" placeholder="VD: 20" />
+
+          <label class="label" for="rate_dpm">Tốc độ (giọt/phút) *</label>
+          <input id="rate_dpm" inputmode="numeric" pattern="[0-9]*" type="number" class="input" placeholder="VD: 40" />
+
+          <label class="label" for="notes">Ghi chú</label>
+          <textarea id="notes" rows="2" class="input" placeholder="(tuỳ chọn)"></textarea>
+
+          <label class="inline-flex items-center gap-2">
+            <input id="wants_email" type="checkbox" />
+            <span>Nhận email khi ca kết thúc</span>
+          </label>
+          <input id="email_to" type="email" class="input" placeholder="Email nhận (nếu khác tài khoản)" />
+
+          <button id="btnCreate" class="btn-primary">Bắt đầu truyền</button>
+          <p id="createMsg" class="small"></p>
         </div>
 
         <!-- Đang chạy -->
-        <div class="bg-white rounded-2xl shadow p-4">
+        <div class="card">
           <div class="flex items-center justify-between mb-2">
             <h2 class="font-semibold">Đang chạy</h2>
             <div class="flex items-center gap-2">
-              <button id="btnReloadRunning" class="text-sm px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">Tải lại</button>
+              <button id="btnReloadRunning" class="btn">Tải lại</button>
               <span id="runningCount" class="badge bg-sky-100 text-sky-700">0</span>
             </div>
           </div>
           <div id="runningList" class="grid gap-3"></div>
         </div>
 
-        <!-- Lịch sử + Log -->
-        <div class="bg-white rounded-2xl shadow p-4">
+        <!-- Lịch sử (đã hoàn thành) -->
+        <div class="card">
           <div class="flex items-center justify-between mb-2">
-            <h2 class="font-semibold">Lịch sử (kèm nhật ký)</h2>
-            <button id="btnReloadHistory" class="text-sm px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">Tải lại</button>
+            <h2 class="font-semibold">Lịch sử</h2>
+            <button id="btnReloadHistory" class="btn">Tải lại</button>
           </div>
           <div id="historyList" class="grid gap-2"></div>
         </div>
