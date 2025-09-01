@@ -1,0 +1,23 @@
+name: "🐞 Bug report"
+description: Báo cáo lỗi
+labels: ["bug"]
+body:
+  - type: textarea
+    id: describe
+    attributes:
+      label: Mô tả lỗi
+      description: Hành vi hiện tại và mong đợi
+      placeholder: Mô tả ngắn gọn…
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Các bước tái hiện
+      description: …
+      placeholder: 1) … 2) … 3) …
+  - type: input
+    id: env
+    attributes:
+      label: Môi trường
+      placeholder: OS/Browser/Version

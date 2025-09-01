@@ -1,0 +1,20 @@
+name: "✨ Feature request"
+description: Đề xuất tính năng
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Nhu cầu
+      description: Tại sao cần tính năng này?
+      placeholder: …
+      value: |
+        Bối cảnh điều dưỡng và giá trị thực tế…
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Tiêu chí nghiệm thu
+      description: Điều kiện để coi là hoàn thành
+      placeholder: …
