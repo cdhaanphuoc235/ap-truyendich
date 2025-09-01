@@ -1,22 +1,34 @@
 import React from "react";
+import { useAuth } from "./auth/AuthProvider";
+import Login from "./pages/Login";
+import HeaderBar from "./components/HeaderBar";
 
 export default function App() {
+  const { session, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-slate-50">
+        <div className="text-slate-600">Đang tải…</div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    // Chưa đăng nhập => tới màn hình Login (nền xanh, nút Google)
+    return <Login />;
+  }
+
+  // Đã đăng nhập => hiển thị khung chính (placeholder giai đoạn 1)
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Header */}
-      <header className="sticky top-0 z-10 bg-brand-600 text-white p-4 shadow">
-        <div className="max-w-screen-sm mx-auto flex items-center justify-between">
-          <h1 className="text-xl font-semibold">Truyen dich</h1>
-          <span className="text-sm opacity-90">Giai đoạn 1 • Scaffold</span>
-        </div>
-      </header>
+      <HeaderBar />
 
-      {/* Main */}
       <main className="flex-1 max-w-screen-sm mx-auto p-4 space-y-6">
         <section className="card">
           <h2 className="section-title">Vùng 2 — Form Nhập liệu</h2>
           <p className="text-sm text-slate-600">
-            Sẽ được hiện thực ở Giai đoạn 4–5 (kèm tính giờ & xác thực).
+            (Sẽ hiện thực ở Giai đoạn 4–5: tính giờ & xác thực, Supabase.)
           </p>
           <button className="btn-primary mt-3">Bắt đầu truyền (placeholder)</button>
         </section>
@@ -32,7 +44,6 @@ export default function App() {
         </section>
       </main>
 
-      {/* Footer */}
       <footer className="max-w-screen-sm mx-auto p-6 text-center text-slate-500">
         Sử dụng cho Điều dưỡng An Phước
       </footer>
