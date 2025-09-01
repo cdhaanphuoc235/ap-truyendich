@@ -3,6 +3,8 @@ import Input from "./ui/Input";
 import Checkbox from "./ui/Checkbox";
 import Button from "./ui/Button";
 import { Info } from "lucide-react";
+import { calcMinutes, computeEndAtFromNow } from "../lib/time";
+import { createInfusion } from "../lib/db";
 
 export type InfusionFormValues = {
   patient_name: string;
@@ -26,32 +28,60 @@ const initialValues: InfusionFormValues = {
 
 export default function InfusionForm() {
   const [v, setV] = useState<InfusionFormValues>(initialValues);
+  const [submitting, setSubmitting] = useState(false);
 
   const onChange =
     (key: keyof InfusionFormValues) =>
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const val = e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value;
+      const isCheckbox = e.target.type === "checkbox";
+      const raw = isCheckbox ? (e.target as HTMLInputElement).checked : e.target.value;
       setV((s) => ({
         ...s,
-        [key]:
-          e.target.type === "number" && val !== ""
-            ? Number(val)
-            : (val as any),
+        [key]: e.target.type === "number" && raw !== "" ? Number(raw) : (raw as any),
       }));
     };
 
-  const submit = (e: React.FormEvent) => {
+  const reset = () => setV(initialValues);
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // UI-only: validate cơ bản trước khi sang GĐ5
-    const numOk =
+    const okNums =
       v.volume_ml !== "" && v.volume_ml > 0 &&
       v.drops_per_ml !== "" && v.drops_per_ml > 0 &&
       v.rate_dpm !== "" && v.rate_dpm > 0;
-    if (!v.patient_name || !numOk) {
-      alert("Vui lòng nhập đủ thông tin và các số phải > 0.\n(Logic lưu & tính giờ sẽ triển khai ở Giai đoạn 5)");
+
+    if (!v.patient_name || !okNums) {
+      alert("Vui lòng nhập đủ thông tin và các số phải > 0.");
       return;
     }
-    alert("Giai đoạn 4 (UI-only): Form đã hợp lệ. Tạo ca sẽ triển khai ở Giai đoạn 5.");
+
+    try {
+      setSubmitting(true);
+      const minutes = calcMinutes(
+        Number(v.volume_ml),
+        Number(v.drops_per_ml),
+        Number(v.rate_dpm)
+      );
+      const end_at = computeEndAtFromNow(minutes);
+
+      await createInfusion({
+        patient_name: v.patient_name.trim(),
+        room: v.room.trim() || undefined,
+        bed: v.bed.trim() || undefined,
+        volume_ml: Number(v.volume_ml),
+        drops_per_ml: Number(v.drops_per_ml),
+        rate_dpm: Number(v.rate_dpm),
+        end_at,
+        notify_email: Boolean(v.notify_email),
+      });
+
+      reset();
+      // Realtime sẽ tự đồng bộ danh sách Active
+    } catch (err: any) {
+      alert(`Không thể tạo ca: ${err.message || err}`);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -110,13 +140,13 @@ export default function InfusionForm() {
           />
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Info className="w-4 h-4" />
-            <span>Email sẽ gửi khi ca kết thúc (cron server) — triển khai ở GĐ6.</span>
+            <span>Email gửi khi ca kết thúc (cron server — GĐ6).</span>
           </div>
         </div>
       </div>
 
-      <Button type="submit" variant="primary" full className="text-lg">
-        Bắt đầu truyền
+      <Button type="submit" variant="primary" full className="text-lg" disabled={submitting}>
+        {submitting ? "Đang tạo ca…" : "Bắt đầu truyền"}
       </Button>
     </form>
   );

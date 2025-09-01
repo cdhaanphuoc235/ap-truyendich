@@ -1,15 +1,70 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useAuth } from "./auth/AuthProvider";
 import Login from "./pages/Login";
 import HeaderBar from "./components/HeaderBar";
 import SectionCard from "./components/SectionCard";
 import InfusionForm from "./components/InfusionForm";
-import Button from "./components/ui/Button";
-import Timer from "./components/Timer";
-import { History, XCircle } from "lucide-react";
+import ActiveInfusionList from "./components/ActiveInfusionList";
+import HistoryList from "./components/HistoryList";
+import { clearHistory, listActive, listHistory, subscribeInfusions, cancelInfusion } from "./lib/db";
+import type { Infusion } from "./types";
 
 export default function App() {
-  const { session, loading } = useAuth();
+  const { session, loading, user } = useAuth();
+  const [active, setActive] = useState<Infusion[]>([]);
+  const [history, setHistory] = useState<Infusion[]>([]);
+  const [loadingData, setLoadingData] = useState(true);
+
+  // Load initial data & subscribe
+  useEffect(() => {
+    if (!user?.id) return;
+    let unsub: (() => void) | undefined;
+
+    (async () => {
+      await refreshLists();
+      unsub = subscribeInfusions(user.id, refreshLists);
+    })();
+
+    return () => {
+      if (unsub) unsub();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  async function refreshLists() {
+    try {
+      setLoadingData(true);
+      const [a, h] = await Promise.all([listActive(), listHistory()]);
+      setActive(a);
+      setHistory(h);
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setLoadingData(false);
+    }
+  }
+
+  async function onCancel(id: string) {
+    if (!confirm("Hủy ca truyền này? (Sẽ chuyển xuống Lịch sử, không gửi thông báo)")) return;
+    try {
+      await cancelInfusion(id);
+      // realtime sẽ tự cập nhật; gọi lại để chắc chắn
+      await refreshLists();
+    } catch (e: any) {
+      alert(`Không thể hủy ca: ${e.message || e}`);
+    }
+  }
+
+  async function onClearHistory() {
+    if (!history.length) return;
+    if (!confirm("Xóa TẤT CẢ lịch sử (của bạn)?")) return;
+    try {
+      await clearHistory();
+      await refreshLists();
+    } catch (e: any) {
+      alert(`Không thể xóa lịch sử: ${e.message || e}`);
+    }
+  }
 
   if (loading) {
     return (
@@ -22,10 +77,6 @@ export default function App() {
   if (!session) {
     return <Login />;
   }
-
-  // GĐ4: UI-only (chưa nối DB). Danh sách là placeholder.
-  const hasActive = false;
-  const hasHistory = false;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -43,51 +94,19 @@ export default function App() {
           title="Vùng 3 — Danh sách ca đang truyền"
           trailing={
             <span className="text-xs text-slate-500">
-              (Realtime & countdown sẽ nối ở GĐ5)
+              {loadingData ? "Đang tải…" : `${active.length} ca`}
             </span>
           }
         >
-          {!hasActive ? (
-            <div className="text-sm text-slate-600">Chưa có ca nào đang truyền.</div>
-          ) : (
-            <div className="space-y-3">
-              {/* Ví dụ card mẫu nếu cần demo UI:
-              <div className="rounded-2xl border p-4 flex items-center justify-between">
-                <div>
-                  <div className="font-medium">Nguyễn Thị A • P301 • G12</div>
-                  <div className="text-xs text-slate-500">Kết thúc dự kiến: 10:45</div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <Timer seconds={1800} />
-                  <Button variant="danger" className="flex items-center gap-2">
-                    <XCircle className="w-4 h-4" /> Hủy
-                  </Button>
-                </div>
-              </div>
-              */}
-            </div>
-          )}
+          <ActiveInfusionList items={active} onCancel={onCancel} />
         </SectionCard>
 
         {/* Vùng 4: Lịch sử */}
         <SectionCard
           title="Vùng 4 — Lịch sử"
-          trailing={
-            <Button variant="danger" className="flex items-center gap-2" disabled>
-              <History className="w-4 h-4" />
-              Xóa tất cả lịch sử
-            </Button>
-          }
+          trailing={<span className="text-xs text-slate-500">{loadingData ? "…" : `${history.length} mục`}</span>}
         >
-          {!hasHistory ? (
-            <div className="text-sm text-slate-600">
-              Chưa có lịch sử. (Sẽ xuất hiện khi ca hoàn thành/hủy — GĐ5/6)
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {/* items */}
-            </div>
-          )}
+          <HistoryList items={history} onClear={onClearHistory} />
         </SectionCard>
       </main>
 
