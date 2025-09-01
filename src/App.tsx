@@ -8,12 +8,18 @@ import ActiveInfusionList from "./components/ActiveInfusionList";
 import HistoryList from "./components/HistoryList";
 import { clearHistory, listActive, listHistory, subscribeInfusions, cancelInfusion } from "./lib/db";
 import type { Infusion } from "./types";
+import { useOnline } from "./hooks/useOnline";
+import { loadLists, saveLists } from "./lib/offlineStore";
+import OfflineBanner from "./components/OfflineBanner";
 
 export default function App() {
   const { session, loading, user } = useAuth();
+  const online = useOnline();
+
   const [active, setActive] = useState<Infusion[]>([]);
   const [history, setHistory] = useState<Infusion[]>([]);
   const [loadingData, setLoadingData] = useState(true);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
   // Load initial data & subscribe
   useEffect(() => {
@@ -29,15 +35,39 @@ export default function App() {
       if (unsub) unsub();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [user?.id, online]);
 
   async function refreshLists() {
     try {
       setLoadingData(true);
+      if (!online) {
+        const cached = loadLists();
+        if (cached) {
+          setActive(cached.active);
+          setHistory(cached.history);
+          setSavedAt(cached.savedAt ?? null);
+          return;
+        }
+        // Không có cache -> giữ trống
+        setActive([]);
+        setHistory([]);
+        setSavedAt(null);
+        return;
+      }
+
       const [a, h] = await Promise.all([listActive(), listHistory()]);
       setActive(a);
       setHistory(h);
+      saveLists(a, h);
+      setSavedAt(new Date().toISOString());
     } catch (e) {
+      // Nếu có cache thì dùng cache làm fallback
+      const cached = loadLists();
+      if (cached) {
+        setActive(cached.active);
+        setHistory(cached.history);
+        setSavedAt(cached.savedAt ?? null);
+      }
       console.warn(e);
     } finally {
       setLoadingData(false);
@@ -48,8 +78,7 @@ export default function App() {
     if (!confirm("Hủy ca truyền này? (Sẽ chuyển xuống Lịch sử, không gửi thông báo)")) return;
     try {
       await cancelInfusion(id);
-      // realtime sẽ tự cập nhật; gọi lại để chắc chắn
-      await refreshLists();
+      await refreshLists(); // realtime + lưu cache
     } catch (e: any) {
       alert(`Không thể hủy ca: ${e.message || e}`);
     }
@@ -84,6 +113,8 @@ export default function App() {
       <HeaderBar />
 
       <main className="flex-1 max-w-screen-sm mx-auto p-4 space-y-6">
+        {!online && <OfflineBanner savedAt={savedAt} />}
+
         {/* Vùng 2: Form Nhập liệu */}
         <SectionCard title="Vùng 2 — Form Nhập liệu">
           <InfusionForm />
