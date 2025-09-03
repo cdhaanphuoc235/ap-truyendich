@@ -1,22 +1,17 @@
+// src/main.tsx
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
-import { initPWA } from "./pwa";
 import { AuthProvider } from "./auth";
-import SoundProvider from "./components/SoundProvider";
-import { TickProvider } from "./clock/TickProvider";
+import AuthCallback from "./pages/AuthCallback";
 
-initPWA();
+const isCallback = window.location.pathname.startsWith("/auth/callback");
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <AuthProvider>
-      <TickProvider>
-        <SoundProvider>
-          <App />
-        </SoundProvider>
-      </TickProvider>
+      {isCallback ? <AuthCallback /> : <App />}
     </AuthProvider>
   </React.StrictMode>
 );

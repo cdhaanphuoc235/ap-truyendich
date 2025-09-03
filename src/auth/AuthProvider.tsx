@@ -1,3 +1,4 @@
+// src/auth/AuthProvider.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
@@ -44,7 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1) Lắng nghe thay đổi session NGAY từ đầu để bắt kịp SIGNED_IN
+    // Đăng ký lắng nghe sớm để không bỏ lỡ SIGNED_IN
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       setSession(newSession);
       if (newSession?.user) {
@@ -62,31 +63,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     (async () => {
       try {
-        const url = new URL(window.location.href);
-        const hasCode = !!url.searchParams.get("code");
-        const hasOAuthHash = /access_token|refresh_token|error_description/i.test(window.location.hash);
-
-        // 2) PKCE (?code=...) -> exchange rồi clean query
-        if (hasCode) {
-          const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-          url.searchParams.delete("code");
-          url.searchParams.delete("state");
-          const cleaned =
-            url.origin + url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "");
-          window.history.replaceState({}, document.title, cleaned);
-          if (error) console.warn("[auth] exchangeCodeForSession error:", error.message);
-        }
-
-        // 3) Luôn gọi getSession để trigger detectSessionInUrl (implicit sẽ được xử lý ở đây)
+        // Gọi getSession() để Supabase có cơ hội đọc hash (implicit) nếu có
         const { data } = await supabase.auth.getSession();
-
-        // 4) Sau khi Supabase đã có cơ hội đọc hash -> mới clean hash
-        if (hasOAuthHash) {
-          const cleaned = window.location.href.split("#")[0];
-          window.history.replaceState({}, document.title, cleaned);
-        }
-
-        // 5) Cập nhật state lần đầu
         setSession(data.session ?? null);
         if (data.session?.user) {
           await upsertProfileFromUser(data.session.user);
@@ -104,13 +82,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function signInWithGoogle() {
-    const redirectTo = window.location.origin + "/";
+    const redirectTo = window.location.origin + "/auth/callback";
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo,
         queryParams: { prompt: "select_account" },
-        flowType: "pkce" // Ưu tiên PKCE cho web
+        flowType: "pkce" // an toàn & ổn định
       }
     });
     if (error) throw error;
