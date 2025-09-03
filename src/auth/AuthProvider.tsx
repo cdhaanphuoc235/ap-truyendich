@@ -3,7 +3,12 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from "
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 
-type Profile = { id: string; email: string | null; full_name: string | null; created_at?: string | null };
+type Profile = {
+  id: string;
+  email: string | null;
+  full_name: string | null;
+  created_at?: string | null;
+};
 
 type AuthState = {
   session: Session | null;
@@ -16,8 +21,12 @@ type AuthState = {
 
 const AuthCtx = createContext<AuthState | undefined>(undefined);
 
-async function loadProfile(userId: string): Promise/Profile | null> {
-  const { data } = await supabase.from("profiles").select("id,email,full_name,created_at").eq("id", userId).maybeSingle();
+async function loadProfile(userId: string): Promise<Profile | null> {
+  const { data } = await supabase
+    .from("profiles")
+    .select("id,email,full_name,created_at")
+    .eq("id", userId)
+    .maybeSingle();
   return (data as Profile) ?? null;
 }
 
@@ -35,7 +44,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // 1) Xử lý callback cho cả PKCE (?code=) và implicit (#access_token=)
   useEffect(() => {
     (async () => {
       try {
@@ -44,22 +52,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const hasCode = !!url.searchParams.get("code");
         if (hasCode) {
           const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-          // Clean URL sau khi exchange xong
+          // Clean URL sau khi exchange
           url.searchParams.delete("code");
           url.searchParams.delete("state");
-          const clean = url.origin + url.pathname + (url.search ? `?${url.searchParams.toString()}` : "");
-          window.history.replaceState({}, document.title, clean);
-          if (error) {
-            console.warn("[auth] exchangeCodeForSession error:", error.message);
-          }
+          const cleaned =
+            url.origin + url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "");
+          window.history.replaceState({}, document.title, cleaned);
+          if (error) console.warn("[auth] exchangeCodeForSession error:", error.message);
         }
 
         // ---- Implicit flow (#access_token=...)
         if (window.location.hash.includes("access_token")) {
-          // supabase-js đã tự parse nếu detectSessionInUrl=true
-          // Clean hash để tránh refresh lại hash
-          const clean = window.location.href.split("#")[0];
-          window.history.replaceState({}, document.title, clean);
+          // detectSessionInUrl=true sẽ tự parse; chỉ cần clean hash
+          const cleaned = window.location.href.split("#")[0];
+          window.history.replaceState({}, document.title, cleaned);
         }
 
         // Lấy session hiện tại
@@ -75,8 +81,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     })();
 
-    // 2) Lắng nghe thay đổi session
-    const { data: sub } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+    // Subscribe thay đổi session
+    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       setSession(newSession);
       if (newSession?.user) {
         try {
@@ -97,14 +103,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function signInWithGoogle() {
-    const redirectTo = window.location.origin + "/"; // về trang gốc của site (Netlify)
+    const redirectTo = window.location.origin + "/";
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo,
-        queryParams: { prompt: "select_account" }, // dễ chọn tài khoản
-        // flowType: "pkce", // Bật nếu anh đã test sẵn PKCE. Để mặc định (implicit) cũng OK.
-      },
+        queryParams: { prompt: "select_account" }
+        // flowType: "pkce", // Có thể bật nếu muốn cưỡng bức PKCE.
+      }
     });
     if (error) throw error;
   }
@@ -120,7 +126,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       profile,
       loading,
       signInWithGoogle,
-      signOut,
+      signOut
     }),
     [session, profile, loading]
   );
