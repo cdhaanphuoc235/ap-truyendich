@@ -25,37 +25,30 @@ export default defineConfig({
         shortcuts: [{ name: "Tạo ca mới", url: "/", description: "Mở nhanh form tạo ca" }]
       },
       workbox: {
-        // App-shell fallback
         navigateFallback: "/index.html",
-        // Bật navigation preload -> PHẢI có runtimeCaching cho navigation
+        navigateFallbackDenylist: [/^\/auth\/callback/], // ĐỪNG fallback route này
         navigationPreload: true,
         runtimeCaching: [
-          // 1) Navigation/documents -> dùng được preloaded response (NetworkFirst)
+          // ĐẢM BẢO callback luôn lên network, không cache
+          { urlPattern: /^https?:\/\/[^/]+\/auth\/callback/, handler: "NetworkOnly" },
+
+          // Navigation / documents
           {
             urlPattern: ({ request }) => request.mode === "navigate",
             handler: "NetworkFirst",
-            options: {
-              cacheName: "pages",
-              expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 7 } // 7 ngày
-            }
+            options: { cacheName: "pages", expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 7 } }
           },
-          // 2) JS/CSS/workers -> SWR
+          // Static assets
           {
             urlPattern: ({ request }) => ["style", "script", "worker"].includes(request.destination),
             handler: "StaleWhileRevalidate",
-            options: {
-              cacheName: "assets",
-              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 } // 30 ngày
-            }
+            options: { cacheName: "assets", expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 } }
           },
-          // 3) Ảnh/âm thanh -> CacheFirst
+          // Media
           {
             urlPattern: ({ request }) => ["image", "audio", "font"].includes(request.destination),
             handler: "CacheFirst",
-            options: {
-              cacheName: "media",
-              expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 }
-            }
+            options: { cacheName: "media", expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 } }
           }
         ]
       },

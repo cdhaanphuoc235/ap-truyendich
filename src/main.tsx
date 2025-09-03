@@ -1,4 +1,3 @@
-// src/main.tsx
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
@@ -10,8 +9,6 @@ const isCallback = window.location.pathname.startsWith("/auth/callback");
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <AuthProvider>
-      {isCallback ? <AuthCallback /> : <App />}
-    </AuthProvider>
+    <AuthProvider>{isCallback ? <AuthCallback /> : <App />}</AuthProvider>
   </React.StrictMode>
 );

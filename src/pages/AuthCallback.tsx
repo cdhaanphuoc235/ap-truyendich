@@ -1,17 +1,31 @@
-// src/pages/AuthCallback.tsx
 import React, { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 export default function AuthCallback() {
   const [msg, setMsg] = useState("Đang xác thực...");
 
   useEffect(() => {
+    let unsub: (() => void) | undefined;
+
     (async () => {
       try {
         const href = window.location.href;
         const url = new URL(href);
         const hasCode = !!url.searchParams.get("code");
         const hasHashTokens = /access_token|refresh_token|error_description/i.test(window.location.hash);
+
+        // Nghe sự kiện, nếu có session thì quay về app
+        const sub = supabase.auth.onAuthStateChange((_ev, session) => {
+          if (session?.user) {
+            setMsg("Thành công! Đang chuyển về ứng dụng...");
+            window.location.replace("/");
+          }
+        });
+        unsub = () => sub.data.subscription.unsubscribe();
 
         if (hasCode) {
           const { error } = await supabase.auth.exchangeCodeForSession(href);
@@ -23,23 +37,35 @@ export default function AuthCallback() {
             url.origin + url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "");
           window.history.replaceState({}, document.title, cleaned);
         } else if (hasHashTokens) {
-          // implicit flow: để supabase đọc hash qua getSession
+          // Implicit: cho supabase đọc hash qua getSession
           await supabase.auth.getSession();
           // Clean hash
           const cleaned = href.split("#")[0];
           window.history.replaceState({}, document.title, cleaned);
         }
 
-        setMsg("Thành công! Đang chuyển về ứng dụng...");
-        // Trở lại trang chủ
-        window.location.replace("/");
+        // Chờ tối đa 5s để session hiện diện
+        const start = Date.now();
+        while (Date.now() - start < 5000) {
+          const { data } = await supabase.auth.getSession();
+          if (data.session?.user) {
+            window.location.replace("/");
+            return;
+          }
+          await sleep(150);
+        }
+
+        throw new Error("Không lấy được session sau khi xác thực.");
       } catch (e: any) {
         console.error("[auth-callback] error:", e?.message || e);
         setMsg("Xác thực thất bại. Vui lòng quay lại và thử lại.");
-        // fallback 3s quay về
-        setTimeout(() => window.location.replace("/"), 3000);
+        setTimeout(() => window.location.replace("/"), 2500);
       }
     })();
+
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
   return (

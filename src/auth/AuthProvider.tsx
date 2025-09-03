@@ -1,14 +1,8 @@
-// src/auth/AuthProvider.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 
-type Profile = {
-  id: string;
-  email: string | null;
-  full_name: string | null;
-  created_at?: string | null;
-};
+type Profile = { id: string; email: string | null; full_name: string | null; created_at?: string | null };
 
 type AuthState = {
   session: Session | null;
@@ -45,7 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Đăng ký lắng nghe sớm để không bỏ lỡ SIGNED_IN
+    // Nghe sự kiện SIGNED_IN càng sớm càng tốt
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       setSession(newSession);
       if (newSession?.user) {
@@ -63,8 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     (async () => {
       try {
-        // Gọi getSession() để Supabase có cơ hội đọc hash (implicit) nếu có
-        const { data } = await supabase.auth.getSession();
+        const { data } = await supabase.auth.getSession(); // cho supabase tự đọc hash nếu có
         setSession(data.session ?? null);
         if (data.session?.user) {
           await upsertProfileFromUser(data.session.user);
@@ -76,9 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     })();
 
-    return () => {
-      sub.subscription.unsubscribe();
-    };
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   async function signInWithGoogle() {
@@ -88,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       options: {
         redirectTo,
         queryParams: { prompt: "select_account" },
-        flowType: "pkce" // an toàn & ổn định
+        flowType: "pkce"
       }
     });
     if (error) throw error;
@@ -99,14 +90,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }
 
   const value = useMemo<AuthState>(
-    () => ({
-      session,
-      user: session?.user ?? null,
-      profile,
-      loading,
-      signInWithGoogle,
-      signOut
-    }),
+    () => ({ session, user: session?.user ?? null, profile, loading, signInWithGoogle, signOut }),
     [session, profile, loading]
   );
 
