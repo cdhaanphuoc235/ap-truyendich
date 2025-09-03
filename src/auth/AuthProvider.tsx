@@ -1,13 +1,9 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+// src/auth/AuthProvider.tsx
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 
-type Profile = {
-  id: string;
-  email: string;
-  full_name: string | null;
-  created_at: string;
-};
+type Profile = { id: string; email: string | null; full_name: string | null; created_at?: string | null };
 
 type AuthState = {
   session: Session | null;
@@ -18,95 +14,122 @@ type AuthState = {
   signOut: () => Promise<void>;
 };
 
-const AuthContext = createContext<AuthState | undefined>(undefined);
+const AuthCtx = createContext<AuthState | undefined>(undefined);
+
+async function loadProfile(userId: string): Promise/Profile | null> {
+  const { data } = await supabase.from("profiles").select("id,email,full_name,created_at").eq("id", userId).maybeSingle();
+  return (data as Profile) ?? null;
+}
+
+async function upsertProfileFromUser(user: User) {
+  const full_name =
+    (user.user_metadata?.name as string | undefined) ??
+    (user.user_metadata?.full_name as string | undefined) ??
+    null;
+  const email = user.email ?? null;
+  await supabase.from("profiles").upsert({ id: user.id, email, full_name });
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Load initial session
+  // 1) Xử lý callback cho cả PKCE (?code=) và implicit (#access_token=)
   useEffect(() => {
-    let mounted = true;
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!mounted) return;
-      setSession(data.session ?? null);
-      setLoading(false);
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+      try {
+        // ---- PKCE flow (?code=...)
+        const url = new URL(window.location.href);
+        const hasCode = !!url.searchParams.get("code");
+        if (hasCode) {
+          const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+          // Clean URL sau khi exchange xong
+          url.searchParams.delete("code");
+          url.searchParams.delete("state");
+          const clean = url.origin + url.pathname + (url.search ? `?${url.searchParams.toString()}` : "");
+          window.history.replaceState({}, document.title, clean);
+          if (error) {
+            console.warn("[auth] exchangeCodeForSession error:", error.message);
+          }
+        }
 
-  // Listen auth state changes
-  useEffect(() => {
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
-      setSession(sess ?? null);
+        // ---- Implicit flow (#access_token=...)
+        if (window.location.hash.includes("access_token")) {
+          // supabase-js đã tự parse nếu detectSessionInUrl=true
+          // Clean hash để tránh refresh lại hash
+          const clean = window.location.href.split("#")[0];
+          window.history.replaceState({}, document.title, clean);
+        }
+
+        // Lấy session hiện tại
+        const { data } = await supabase.auth.getSession();
+        setSession(data.session ?? null);
+        if (data.session?.user) {
+          await upsertProfileFromUser(data.session.user);
+          const p = await loadProfile(data.session.user.id);
+          setProfile(p);
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
+
+    // 2) Lắng nghe thay đổi session
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      setSession(newSession);
+      if (newSession?.user) {
+        try {
+          await upsertProfileFromUser(newSession.user);
+          const p = await loadProfile(newSession.user.id);
+          setProfile(p);
+        } catch (e) {
+          console.warn("[auth] profile sync error:", e);
+        }
+      } else {
+        setProfile(null);
+      }
     });
+
     return () => {
       sub.subscription.unsubscribe();
     };
   }, []);
 
-  // Fetch profile when session changes
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      if (session?.user?.id) {
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("id,email,full_name,created_at")
-          .eq("id", session.user.id)
-          .single();
-        if (!active) return;
-        if (error) {
-          console.warn("Load profile error:", error.message);
-          setProfile(null);
-        } else {
-          setProfile(data as Profile);
-        }
-      } else {
-        setProfile(null);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [session?.user?.id]);
-
-  const signInWithGoogle = async () => {
-    const redirectTo = window.location.origin; // quay lại app sau login
+  async function signInWithGoogle() {
+    const redirectTo = window.location.origin + "/"; // về trang gốc của site (Netlify)
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo, queryParams: { prompt: "select_account" } }
+      options: {
+        redirectTo,
+        queryParams: { prompt: "select_account" }, // dễ chọn tài khoản
+        // flowType: "pkce", // Bật nếu anh đã test sẵn PKCE. Để mặc định (implicit) cũng OK.
+      },
     });
-    if (error) {
-      alert(`Không thể đăng nhập Google: ${error.message}`);
-    }
-  };
+    if (error) throw error;
+  }
 
-  const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) alert(`Đăng xuất thất bại: ${error.message}`);
-  };
+  async function signOut() {
+    await supabase.auth.signOut();
+  }
 
-  const value: AuthState = {
-    session,
-    user: session?.user ?? null,
-    profile,
-    loading
-      // loading true lúc khởi động để tránh chớp màn
-      ,
-    signInWithGoogle,
-    signOut
-  };
+  const value = useMemo<AuthState>(
+    () => ({
+      session,
+      user: session?.user ?? null,
+      profile,
+      loading,
+      signInWithGoogle,
+      signOut,
+    }),
+    [session, profile, loading]
+  );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
 
 export function useAuth() {
-  const ctx = useContext(AuthContext);
+  const ctx = useContext(AuthCtx);
   if (!ctx) throw new Error("useAuth must be used within <AuthProvider>");
   return ctx;
 }
