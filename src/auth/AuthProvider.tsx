@@ -1,4 +1,3 @@
-// src/auth/AuthProvider.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
@@ -45,43 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    (async () => {
-      try {
-        // ---- PKCE flow (?code=...)
-        const url = new URL(window.location.href);
-        const hasCode = !!url.searchParams.get("code");
-        if (hasCode) {
-          const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-          // Clean URL sau khi exchange
-          url.searchParams.delete("code");
-          url.searchParams.delete("state");
-          const cleaned =
-            url.origin + url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "");
-          window.history.replaceState({}, document.title, cleaned);
-          if (error) console.warn("[auth] exchangeCodeForSession error:", error.message);
-        }
-
-        // ---- Implicit flow (#access_token=...)
-        if (window.location.hash.includes("access_token")) {
-          // detectSessionInUrl=true sẽ tự parse; chỉ cần clean hash
-          const cleaned = window.location.href.split("#")[0];
-          window.history.replaceState({}, document.title, cleaned);
-        }
-
-        // Lấy session hiện tại
-        const { data } = await supabase.auth.getSession();
-        setSession(data.session ?? null);
-        if (data.session?.user) {
-          await upsertProfileFromUser(data.session.user);
-          const p = await loadProfile(data.session.user.id);
-          setProfile(p);
-        }
-      } finally {
-        setLoading(false);
-      }
-    })();
-
-    // Subscribe thay đổi session
+    // 1) Lắng nghe thay đổi session NGAY từ đầu để bắt kịp SIGNED_IN
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
       setSession(newSession);
       if (newSession?.user) {
@@ -97,6 +60,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
+    (async () => {
+      try {
+        const url = new URL(window.location.href);
+        const hasCode = !!url.searchParams.get("code");
+        const hasOAuthHash = /access_token|refresh_token|error_description/i.test(window.location.hash);
+
+        // 2) PKCE (?code=...) -> exchange rồi clean query
+        if (hasCode) {
+          const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+          url.searchParams.delete("code");
+          url.searchParams.delete("state");
+          const cleaned =
+            url.origin + url.pathname + (url.searchParams.toString() ? `?${url.searchParams.toString()}` : "");
+          window.history.replaceState({}, document.title, cleaned);
+          if (error) console.warn("[auth] exchangeCodeForSession error:", error.message);
+        }
+
+        // 3) Luôn gọi getSession để trigger detectSessionInUrl (implicit sẽ được xử lý ở đây)
+        const { data } = await supabase.auth.getSession();
+
+        // 4) Sau khi Supabase đã có cơ hội đọc hash -> mới clean hash
+        if (hasOAuthHash) {
+          const cleaned = window.location.href.split("#")[0];
+          window.history.replaceState({}, document.title, cleaned);
+        }
+
+        // 5) Cập nhật state lần đầu
+        setSession(data.session ?? null);
+        if (data.session?.user) {
+          await upsertProfileFromUser(data.session.user);
+          const p = await loadProfile(data.session.user.id);
+          setProfile(p);
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
+
     return () => {
       sub.subscription.unsubscribe();
     };
@@ -108,8 +109,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       provider: "google",
       options: {
         redirectTo,
-        queryParams: { prompt: "select_account" }
-        // flowType: "pkce", // Có thể bật nếu muốn cưỡng bức PKCE.
+        queryParams: { prompt: "select_account" },
+        flowType: "pkce" // Ưu tiên PKCE cho web
       }
     });
     if (error) throw error;
