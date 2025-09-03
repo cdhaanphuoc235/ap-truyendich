@@ -1,5 +1,5 @@
 import React from "react";
-import { useAuth } from "../auth/AuthProvider";
+import { useAuth } from "../auth";
 
 export default function HeaderBar() {
   const { user, profile, signOut } = useAuth();
