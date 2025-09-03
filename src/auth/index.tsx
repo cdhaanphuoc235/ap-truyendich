@@ -1,13 +1,16 @@
-// src/auth/index.ts
+// src/auth/index.tsx
 import React from "react";
 import MockAuthProvider, { useAuth as useAuthMock } from "./MockAuthProvider";
-import { AuthProvider as SupabaseAuthProvider, useAuth as useAuthSupabase } from "./AuthProvider";
+import {
+  AuthProvider as SupabaseAuthProvider,
+  useAuth as useAuthSupabase,
+} from "./AuthProvider";
 
 const mode = (import.meta.env.VITE_AUTH_MODE || "supabase").toLowerCase();
 
 /**
- * Wrapper provider: render đúng provider theo ENV.
- * Top-level export hợp lệ cho bundler (không export trong if/else).
+ * Wrapper provider: chọn provider theo ENV ở runtime.
+ * (Top-level export hợp lệ cho bundler)
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   return mode === "mock" ? (
@@ -17,10 +20,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-/**
- * Wrapper hook: ủy quyền tới hook tương ứng theo ENV.
- * Lưu ý: Provider bên trên PHẢI khớp với hook này (đã đảm bảo).
- */
+/** Hook ủy quyền theo ENV */
 export function useAuth() {
   return mode === "mock" ? useAuthMock() : useAuthSupabase();
 }
