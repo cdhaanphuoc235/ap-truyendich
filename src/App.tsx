@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { useAuth } from "./auth/AuthProvider";
+import React, { useEffect, useRef, useState } from "react";
+import { useAuth } from "./auth";
 import Login from "./pages/Login";
 import HeaderBar from "./components/HeaderBar";
 import SectionCard from "./components/SectionCard";
@@ -21,37 +21,53 @@ export default function App() {
   const [loadingData, setLoadingData] = useState(true);
   const [savedAt, setSavedAt] = useState<string | null>(null);
 
-  // Load initial data & subscribe
+  const refreshing = useRef(false);
+  const throttleId = useRef<number | null>(null);
+
   useEffect(() => {
     if (!user?.id) return;
     let unsub: (() => void) | undefined;
 
     (async () => {
       await refreshLists();
-      unsub = subscribeInfusions(user.id, refreshLists);
+      // throttle realtime: gộp nhiều sự kiện trong 500ms
+      const scheduleRefresh = () => {
+        if (throttleId.current) return;
+        throttleId.current = window.setTimeout(async () => {
+          throttleId.current = null;
+          await refreshLists();
+        }, 500);
+      };
+      unsub = subscribeInfusions(user.id, scheduleRefresh);
     })();
 
     return () => {
       if (unsub) unsub();
+      if (throttleId.current) {
+        clearTimeout(throttleId.current);
+        throttleId.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, online]);
 
   async function refreshLists() {
     try {
+      if (refreshing.current) return;
+      refreshing.current = true;
       setLoadingData(true);
+
       if (!online) {
         const cached = loadLists();
         if (cached) {
           setActive(cached.active);
           setHistory(cached.history);
           setSavedAt(cached.savedAt ?? null);
-          return;
+        } else {
+          setActive([]);
+          setHistory([]);
+          setSavedAt(null);
         }
-        // Không có cache -> giữ trống
-        setActive([]);
-        setHistory([]);
-        setSavedAt(null);
         return;
       }
 
@@ -61,7 +77,6 @@ export default function App() {
       saveLists(a, h);
       setSavedAt(new Date().toISOString());
     } catch (e) {
-      // Nếu có cache thì dùng cache làm fallback
       const cached = loadLists();
       if (cached) {
         setActive(cached.active);
@@ -71,6 +86,7 @@ export default function App() {
       console.warn(e);
     } finally {
       setLoadingData(false);
+      refreshing.current = false;
     }
   }
 
@@ -78,7 +94,7 @@ export default function App() {
     if (!confirm("Hủy ca truyền này? (Sẽ chuyển xuống Lịch sử, không gửi thông báo)")) return;
     try {
       await cancelInfusion(id);
-      await refreshLists(); // realtime + lưu cache
+      await refreshLists();
     } catch (e: any) {
       alert(`Không thể hủy ca: ${e.message || e}`);
     }
@@ -109,30 +125,22 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      {/* Vùng 1: Header */}
       <HeaderBar />
 
       <main className="flex-1 max-w-screen-sm mx-auto p-4 space-y-6">
         {!online && <OfflineBanner savedAt={savedAt} />}
 
-        {/* Vùng 2: Form Nhập liệu */}
         <SectionCard title="Vùng 2 — Form Nhập liệu">
           <InfusionForm />
         </SectionCard>
 
-        {/* Vùng 3: Danh sách ca đang truyền */}
         <SectionCard
           title="Vùng 3 — Danh sách ca đang truyền"
-          trailing={
-            <span className="text-xs text-slate-500">
-              {loadingData ? "Đang tải…" : `${active.length} ca`}
-            </span>
-          }
+          trailing={<span className="text-xs text-slate-500">{loadingData ? "Đang tải…" : `${active.length} ca`}</span>}
         >
           <ActiveInfusionList items={active} onCancel={onCancel} />
         </SectionCard>
 
-        {/* Vùng 4: Lịch sử */}
         <SectionCard
           title="Vùng 4 — Lịch sử"
           trailing={<span className="text-xs text-slate-500">{loadingData ? "…" : `${history.length} mục`}</span>}
@@ -141,7 +149,6 @@ export default function App() {
         </SectionCard>
       </main>
 
-      {/* Footer */}
       <footer className="max-w-screen-sm mx-auto p-6 text-center text-slate-500">
         Sử dụng cho Điều dưỡng An Phước
       </footer>

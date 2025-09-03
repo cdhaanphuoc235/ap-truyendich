@@ -1,5 +1,6 @@
+// tailwind.config.cjs
 /** @type {import('tailwindcss').Config} */
-export default {
+module.exports = {
   content: ["./index.html", "./src/**/*.{ts,tsx,js,jsx}"],
   theme: {
     extend: {
@@ -9,9 +10,9 @@ export default {
           100: "#E0F2FE",
           300: "#7DD3FC",
           500: "#0EA5E9",
-          600: "#0284C7"
-        }
-      }
+          600: "#0284C7",
+        },
+      },
     },
   },
   plugins: [],
