@@ -1,104 +1,96 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 
-type Profile = { id: string; email: string | null; full_name: string | null; created_at?: string | null };
+type Profile = { id: string; email: string | null; full_name: string | null; created_at: string };
+type AuthState =
+  | { status: "loading" }
+  | { status: "unauthenticated" }
+  | { status: "authenticated"; user: NonNullable<import("@supabase/supabase-js").User>; profile: Profile | null };
 
-type AuthState = {
-  session: Session | null;
-  user: User | null;
-  profile: Profile | null;
-  loading: boolean;
+type Ctx = {
+  state: AuthState;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
+  refreshSession: () => Promise<void>;
 };
 
-const AuthCtx = createContext<AuthState | undefined>(undefined);
+const AuthCtx = createContext<Ctx | undefined>(undefined);
 
 async function loadProfile(userId: string): Promise<Profile | null> {
-  const { data } = await supabase
-    .from("profiles")
-    .select("id,email,full_name,created_at")
-    .eq("id", userId)
-    .maybeSingle();
+  const { data, error } = await supabase.from("profiles").select("id,email,full_name,created_at").eq("id", userId).maybeSingle();
+  if (error) {
+    console.warn("loadProfile error", error);
+  }
   return (data as Profile) ?? null;
 }
 
-async function upsertProfileFromUser(user: User) {
-  const full_name =
-    (user.user_metadata?.name as string | undefined) ??
-    (user.user_metadata?.full_name as string | undefined) ??
-    null;
-  const email = user.email ?? null;
-  await supabase.from("profiles").upsert({ id: user.id, email, full_name });
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [state, setState] = useState<AuthState>({ status: "loading" });
 
+  // 1) Lần tải đầu: exchange code -> session (nếu có) rồi set state
   useEffect(() => {
-    // Nghe sự kiện SIGNED_IN càng sớm càng tốt
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      setSession(newSession);
-      if (newSession?.user) {
-        try {
-          await upsertProfileFromUser(newSession.user);
-          const p = await loadProfile(newSession.user.id);
-          setProfile(p);
-        } catch (e) {
-          console.warn("[auth] profile sync error:", e);
-        }
-      } else {
-        setProfile(null);
-      }
-    });
-
+    let mounted = true;
     (async () => {
-      try {
-        const { data } = await supabase.auth.getSession(); // cho supabase tự đọc hash nếu có
-        setSession(data.session ?? null);
-        if (data.session?.user) {
-          await upsertProfileFromUser(data.session.user);
-          const p = await loadProfile(data.session.user.id);
-          setProfile(p);
-        }
-      } finally {
-        setLoading(false);
+      const { data, error } = await supabase.auth.getSession(); // auto exchange PKCE code nếu có trong URL
+      if (!mounted) return;
+      if (error) {
+        console.error("getSession error", error);
+        setState({ status: "unauthenticated" });
+        return;
+      }
+      if (data.session?.user) {
+        const profile = await loadProfile(data.session.user.id);
+        setState({ status: "authenticated", user: data.session.user, profile });
+      } else {
+        setState({ status: "unauthenticated" });
       }
     })();
 
-    return () => sub.subscription.unsubscribe();
+    // 2) Lắng nghe thay đổi auth sau này
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        const profile = await loadProfile(session.user.id);
+        setState({ status: "authenticated", user: session.user, profile });
+      } else if (event === "SIGNED_OUT") {
+        setState({ status: "unauthenticated" });
+      }
+    });
+    return () => {
+      mounted = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   async function signInWithGoogle() {
-    const redirectTo = window.location.origin + "/auth/callback";
+    const redirectTo = window.location.origin; // quay lại đúng domain Netlify
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo,
         queryParams: { prompt: "select_account" },
-        flowType: "pkce"
-      }
+      },
     });
-    if (error) throw error;
+    if (error) console.error("signInWithGoogle error", error);
   }
 
   async function signOut() {
-    await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error("signOut error", error);
   }
 
-  const value = useMemo<AuthState>(
-    () => ({ session, user: session?.user ?? null, profile, loading, signInWithGoogle, signOut }),
-    [session, profile, loading]
-  );
+  async function refreshSession() {
+    await supabase.auth.getSession();
+  }
 
+  const value = useMemo<Ctx>(
+    () => ({ state, signInWithGoogle, signOut, refreshSession }),
+    [state]
+  );
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
 
 export function useAuth() {
   const ctx = useContext(AuthCtx);
-  if (!ctx) throw new Error("useAuth must be used within <AuthProvider>");
+  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
