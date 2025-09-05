@@ -1,28 +1,19 @@
+/* src/index.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* App baseline */
-:root {
-  color-scheme: light;
-}
-
+/* Base layout */
 html, body, #root {
   height: 100%;
 }
 
+/* Nền app theo màu thương hiệu */
 body {
-  @apply bg-slate-50 text-slate-900;
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  @apply bg-brand-500 text-white;
 }
 
-/* Utility styles for common UI pieces */
-.btn-primary {
-  @apply bg-brand-500 hover:bg-brand-600 text-white font-semibold rounded-xl px-4 py-3;
-}
-.card {
-  @apply bg-white rounded-2xl shadow p-4;
-}
-.section-title {
-  @apply text-lg font-semibold;
+/* Một vài tiện ích nhỏ cho mobile-first (nếu cần) */
+.container {
+  @apply mx-auto px-4;
 }
