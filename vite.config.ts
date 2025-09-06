@@ -1,78 +1,100 @@
+// vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
-
-// Lưu ý: Chúng ta đảm bảo SW không can thiệp cross-origin đến Supabase
-// để tránh mọi rủi ro mất header Authorization/apikey trong luồng OAuth.
 
 export default defineConfig({
   plugins: [
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["logo.svg", "alarm.mp3"],
+      injectRegister: "auto",
+      includeAssets: [
+        "favicon.svg",
+        "monicaLogo.png",
+        "icons/icon-192x192.png",
+        "icons/icon-512x512.png",
+        "icons/icon-512x512-maskable.png",
+        "alarm.mp3"
+      ],
       manifest: {
-        name: "ap-truyendich",
-        short_name: "Truyền dịch",
-        description: "PWA hỗ trợ điều dưỡng tính & theo dõi thời gian truyền dịch.",
+        name: "Truyen dich",
+        short_name: "Truyen dich",
+        description:
+          "PWA hỗ trợ điều dưỡng tính & theo dõi thời gian truyền dịch.",
         theme_color: "#0EA5E9",
-        background_color: "#F8FAFC",
+        background_color: "#0EA5E9",
         display: "standalone",
-        scope: "/",
         start_url: "/",
         icons: [
-          { src: "/logo.svg", sizes: "any", type: "image/svg+xml", purpose: "any maskable" },
-          { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
-          { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
-        ],
-        shortcuts: [{ name: "Tạo ca mới", url: "/", description: "Mở nhanh form tạo ca" }],
+          {
+            src: "/icons/icon-192x192.png",
+            sizes: "192x192",
+            type: "image/png"
+          },
+          {
+            src: "/icons/icon-512x512.png",
+            sizes: "512x512",
+            type: "image/png"
+          },
+          {
+            src: "/icons/icon-512x512-maskable.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "any maskable"
+          }
+        ]
       },
       workbox: {
+        // Dùng app-shell khi offline
         navigateFallback: "/index.html",
-        // Đừng fallback các callback nội bộ (nếu có)
-        navigateFallbackDenylist: [/^\/auth\/callback/],
-        navigationPreload: true,
+        // Giữ glob đơn giản, tránh cảnh báo thừa
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest,wasm,mp3}"],
+        // Không dùng navigationPreload để khỏi yêu cầu cấu hình đặc biệt
+        navigationPreload: false,
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
-          // 1) CHẶN SW đụng vào mọi call Supabase AUTH (cross-origin)
+          // 1) Auth của Supabase => luôn đi mạng, không cache
           {
-            urlPattern: /^https:\/\/[a-zA-Z0-9.-]+\.supabase\.co\/auth\/.*/i,
+            urlPattern: ({ url }) =>
+              url.origin.includes(".supabase.co") &&
+              url.pathname.startsWith("/auth/"),
             handler: "NetworkOnly",
-            options: { cacheName: "supabase-auth" },
+            method: "GET"
           },
-          // 2) CHẶN SW đụng vào REST (PostgREST)
           {
-            urlPattern: /^https:\/\/[a-zA-Z0-9.-]+\.supabase\.co\/rest\/.*/i,
+            urlPattern: ({ url }) =>
+              url.origin.includes(".supabase.co") &&
+              url.pathname.startsWith("/auth/"),
             handler: "NetworkOnly",
-            options: { cacheName: "supabase-rest" },
+            method: "POST"
           },
-          // 3) CHẶN SW đụng vào Storage
+          // 2) Supabase API khác: ưu tiên mạng, có cache dự phòng ngắn
           {
-            urlPattern: /^https:\/\/[a-zA-Z0-9.-]+\.supabase\.co\/storage\/.*/i,
-            handler: "NetworkOnly",
-            options: { cacheName: "supabase-storage" },
-          },
-          // 4) Navigation/documents của chính app (same-origin)
-          {
-            urlPattern: ({ request }) => request.mode === "navigate",
+            urlPattern: ({ url }) => url.origin.includes(".supabase.co"),
             handler: "NetworkFirst",
-            options: { cacheName: "pages", expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 7 } },
+            options: {
+              cacheName: "supabase-api",
+              networkTimeoutSeconds: 5,
+              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] }
+            }
           },
-          // 5) Static assets same-origin
+          // 3) Ảnh tĩnh
           {
-            urlPattern: ({ request }) => ["style", "script", "worker"].includes(request.destination),
+            urlPattern: ({ request }) => request.destination === "image",
             handler: "StaleWhileRevalidate",
-            options: { cacheName: "assets", expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 30 } },
-          },
-          // 6) Media same-origin
-          {
-            urlPattern: ({ request }) => ["image", "audio", "font"].includes(request.destination),
-            handler: "CacheFirst",
-            options: { cacheName: "media", expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 30 } },
-          },
-        ],
-      },
-      devOptions: { enabled: true },
-    }),
+            options: {
+              cacheName: "images",
+              expiration: { maxEntries: 64, maxAgeSeconds: 7 * 24 * 60 * 60 }
+            }
+          }
+        ]
+      }
+    })
   ],
-  server: { port: 5173, host: true },
+  build: {
+    outDir: "dist",
+    sourcemap: false
+  }
 });

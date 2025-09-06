@@ -1,96 +1,76 @@
+// src/auth/AuthProvider.tsx
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabaseClient";
 
-type Profile = { id: string; email: string | null; full_name: string | null; created_at: string };
-type AuthState =
-  | { status: "loading" }
-  | { status: "unauthenticated" }
-  | { status: "authenticated"; user: NonNullable<import("@supabase/supabase-js").User>; profile: Profile | null };
-
-type Ctx = {
-  state: AuthState;
+type AuthState = {
+  user: User | null;
+  session: Session | null;
+  loading: boolean;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
-  refreshSession: () => Promise<void>;
 };
 
-const AuthCtx = createContext<Ctx | undefined>(undefined);
+const AuthCtx = createContext<AuthState | undefined>(undefined);
+export const useAuth = () => {
+  const ctx = useContext(AuthCtx);
+  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
+  return ctx;
+};
 
-async function loadProfile(userId: string): Promise<Profile | null> {
-  const { data, error } = await supabase.from("profiles").select("id,email,full_name,created_at").eq("id", userId).maybeSingle();
-  if (error) {
-    console.warn("loadProfile error", error);
-  }
-  return (data as Profile) ?? null;
-}
+export default function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [session, setSession] = useState<Session | null>(null);
+  const [loading, setLoading] = useState(true);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AuthState>({ status: "loading" });
-
-  // 1) Lần tải đầu: exchange code -> session (nếu có) rồi set state
+  // 1) Luôn thử exchange code ở BẤT KỲ URL nào có ?code=..., không phụ thuộc /auth/callback
   useEffect(() => {
-    let mounted = true;
     (async () => {
-      const { data, error } = await supabase.auth.getSession(); // auto exchange PKCE code nếu có trong URL
-      if (!mounted) return;
-      if (error) {
-        console.error("getSession error", error);
-        setState({ status: "unauthenticated" });
-        return;
+      try {
+        const url = new URL(window.location.href);
+        const hasCode = url.searchParams.get("code");
+        if (hasCode) {
+          const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+          if (error) console.error("[auth] exchangeCodeForSession error:", error);
+          // dọn URL cho sạch
+          url.searchParams.delete("code");
+          url.searchParams.delete("state");
+          window.history.replaceState({}, "", url.toString());
+        }
+      } catch (e) {
+        console.error("[auth] exchange failed:", e);
       }
-      if (data.session?.user) {
-        const profile = await loadProfile(data.session.user.id);
-        setState({ status: "authenticated", user: data.session.user, profile });
-      } else {
-        setState({ status: "unauthenticated" });
-      }
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session ?? null);
+      setLoading(false);
     })();
-
-    // 2) Lắng nghe thay đổi auth sau này
-    const { data: sub } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === "SIGNED_IN" && session?.user) {
-        const profile = await loadProfile(session.user.id);
-        setState({ status: "authenticated", user: session.user, profile });
-      } else if (event === "SIGNED_OUT") {
-        setState({ status: "unauthenticated" });
-      }
-    });
-    return () => {
-      mounted = false;
-      sub.subscription.unsubscribe();
-    };
   }, []);
 
-  async function signInWithGoogle() {
-    const redirectTo = window.location.origin; // quay lại đúng domain Netlify
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo,
-        queryParams: { prompt: "select_account" },
-      },
-    });
-    if (error) console.error("signInWithGoogle error", error);
-  }
+  // 2) Đồng bộ realtime state
+  useEffect(() => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s ?? null));
+    return () => sub.subscription.unsubscribe();
+  }, []);
 
-  async function signOut() {
-    const { error } = await supabase.auth.signOut();
-    if (error) console.error("signOut error", error);
-  }
+  const value = useMemo<AuthState>(() => ({
+    user: session?.user ?? null,
+    session,
+    loading,
+    async signInWithGoogle() {
+      const redirectTo = window.location.origin; // có thể trả về /?code=..., ta đã handle ở trên
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo,
+          queryParams: { prompt: "consent", access_type: "offline" }
+        }
+      });
+      if (error) console.error("[auth] signInWithOAuth error:", error);
+    },
+    async signOut() {
+      const { error } = await supabase.auth.signOut();
+      if (error) console.error("[auth] signOut error:", error);
+    }
+  }), [session, loading]);
 
-  async function refreshSession() {
-    await supabase.auth.getSession();
-  }
-
-  const value = useMemo<Ctx>(
-    () => ({ state, signInWithGoogle, signOut, refreshSession }),
-    [state]
-  );
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthCtx);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
 }
