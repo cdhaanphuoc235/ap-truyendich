@@ -12,65 +12,85 @@ type AuthState = {
 };
 
 const AuthCtx = createContext<AuthState | undefined>(undefined);
-export const useAuth = () => {
-  const ctx = useContext(AuthCtx);
-  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
-  return ctx;
-};
 
-export default function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // 1) Luôn thử exchange code ở BẤT KỲ URL nào có ?code=..., không phụ thuộc /auth/callback
+  // 1) PKCE: nếu URL có ?code=..., đổi code -> session rồi xóa query
   useEffect(() => {
-    (async () => {
-      try {
-        const url = new URL(window.location.href);
-        const hasCode = url.searchParams.get("code");
-        if (hasCode) {
-          const { error } = await supabase.auth.exchangeCodeForSession(window.location.href);
-          if (error) console.error("[auth] exchangeCodeForSession error:", error);
-          // dọn URL cho sạch
-          url.searchParams.delete("code");
-          url.searchParams.delete("state");
-          window.history.replaceState({}, "", url.toString());
-        }
-      } catch (e) {
-        console.error("[auth] exchange failed:", e);
-      }
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session ?? null);
+    const url = new URL(window.location.href);
+    const hasCode = url.searchParams.get("code");
+    const hasError = url.searchParams.get("error_description");
+    if (hasCode && !hasError) {
+      supabase.auth.exchangeCodeForSession(window.location.href)
+        .then(({ data, error }) => {
+          if (error) {
+            console.error("[auth] exchangeCodeForSession error:", error);
+            return;
+          }
+          setSession(data.session);
+          setUser(data.user);
+          // Bỏ query để SW không lặp lại
+          window.history.replaceState({}, "", "/");
+        })
+        .finally(() => setLoading(false));
+    } else {
       setLoading(false);
-    })();
+    }
   }, []);
 
-  // 2) Đồng bộ realtime state
+  // 2) Nạp session ban đầu + theo dõi thay đổi
   useEffect(() => {
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s ?? null));
-    return () => sub.subscription.unsubscribe();
+    let mounted = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setSession(data.session ?? null);
+      setUser(data.session?.user ?? null);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      setUser(newSession?.user ?? null);
+    });
+
+    return () => {
+      mounted = false;
+      subscription?.unsubscribe();
+    };
   }, []);
 
   const value = useMemo<AuthState>(() => ({
-    user: session?.user ?? null,
+    user,
     session,
     loading,
-    async signInWithGoogle() {
-      const redirectTo = window.location.origin; // có thể trả về /?code=..., ta đã handle ở trên
-      const { error } = await supabase.auth.signInWithOAuth({
+    signInWithGoogle: async () => {
+      const redirectTo = window.location.origin;
+      // Dùng PKCE (cast any để tránh mismatch type giữa các version gotrue)
+      await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
           redirectTo,
-          queryParams: { prompt: "consent", access_type: "offline" }
-        }
-      });
-      if (error) console.error("[auth] signInWithOAuth error:", error);
+          queryParams: { prompt: "select_account" },
+        },
+        // @ts-ignore
+        flowType: "pkce",
+      } as any);
     },
-    async signOut() {
-      const { error } = await supabase.auth.signOut();
-      if (error) console.error("[auth] signOut error:", error);
-    }
-  }), [session, loading]);
+    signOut: async () => {
+      await supabase.auth.signOut();
+      setUser(null);
+      setSession(null);
+    },
+  }), [user, session, loading]);
 
   return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
+}
+
+export function useAuth(): AuthState {
+  const ctx = useContext(AuthCtx);
+  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
+  return ctx;
 }
